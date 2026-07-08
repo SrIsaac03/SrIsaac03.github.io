@@ -67,7 +67,8 @@ los días rojos, solo el 53%. Detalles y limitaciones en `backtest/REPORT.md`.
   configuraciones (DSR≈100%), porque procede sobre todo de reducir la volatilidad, no de adivinar.
 - **Walk-forward (100% fuera de muestra):** reoptimizando cada año con solo los 8 años previos, el
   Sharpe se mantiene en 0,63 (vs 0,44 de comprar-y-mantener) y la **caída máxima en -19% vs -57%**.
-- **Costes:** ~18 operaciones/año; el Sharpe apenas cambia con costes de 5-25 pb.
+- **Baja fricción:** con histéresis de 3 sesiones (la señal solo cambia si se confirma),
+  solo ~7,6 operaciones/año; el Sharpe apenas cambia con costes de 5-25 pb.
 - **Across-assets:** el semáforo **reduce la caída máxima en los 25/25 activos** probados (protección
   universal), aunque solo mejora el Sharpe en 11/25 (en activos muy alcistas, estar fuera cuesta).
 

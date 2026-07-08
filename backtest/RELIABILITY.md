@@ -16,8 +16,8 @@ autocorrelación de ambas series).
 
 | Horizonte | Verde − Rojo (observado) | Media bajo azar | p-valor |
 |---|---|---|---|
-| 3 meses (63 sesiones) | 2.2% | -0.0% | **0.1466** |
-| 1 mes (21 sesiones) | 0.6% | -0.0% | **0.1703** |
+| 3 meses (63 sesiones) | 2.1% | -0.0% | **0.1503** |
+| 1 mes (21 sesiones) | 0.6% | -0.0% | **0.1826** |
 
 **Lectura:** un p-valor < 0,05 indica que la diferencia verde-rojo es muy
 improbable por azar. ⚠️ La señal a 3 meses no alcanza significancia estándar.
@@ -60,12 +60,12 @@ comen la ventaja, y que remunerar la liquidez (letras al 2-4%) la mejora.
 
 | Coste/operación | Liquidez 0% | Liquidez 2% | Liquidez 4% |
 |---|---|---|---|
-| 0 pb | Sharpe 0.78 | Sharpe 0.83 | Sharpe 0.87 |
-| 5 pb | Sharpe 0.78 | Sharpe 0.83 | Sharpe 0.87 |
-| 10 pb | Sharpe 0.78 | Sharpe 0.83 | Sharpe 0.87 |
-| 25 pb | Sharpe 0.78 | Sharpe 0.83 | Sharpe 0.87 |
+| 0 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.84 |
+| 5 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.84 |
+| 10 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.84 |
+| 25 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.84 |
 
-Operaciones totales en 35 años: **658** (≈18.5/año).
+Operaciones totales en 35 años: **270** (≈7.6/año).
 **Lectura:** con costes realistas (5-10 pb) el Sharpe apenas se mueve; remunerar la
 liquidez lo mejora claramente, porque el semáforo pasa tiempo fuera del mercado.
 
@@ -77,9 +77,9 @@ sobreajuste al índice.
 
 | Métrica | Resultado |
 |---|---|
-| Activos donde el timing mejora el Sharpe | **11/25** |
+| Activos donde el timing mejora el Sharpe | **8/25** |
 | Activos donde el timing reduce la caída máxima | **25/25** |
-| Mejora mediana de Sharpe vs comprar-y-mantener | -0.04 |
+| Mejora mediana de Sharpe vs comprar-y-mantener | -0.07 |
 
 **Lectura:** la reducción de caídas debería ser casi universal (el semáforo protege
 en tendencias bajistas de cualquier activo); la mejora de Sharpe es más variable
@@ -87,7 +87,7 @@ porque en activos muy alcistas estar fuera cuesta rentabilidad.
 
 ## Veredicto honesto
 
-- **Significancia:** la señal NO alcanza significancia estándar a 3 meses (p=0.1466); tratar con cautela.
+- **Significancia:** la señal NO alcanza significancia estándar a 3 meses (p=0.1503); tratar con cautela.
 - **Multiple-testing:** supera el Sharpe deflactado (DSR=100.0%): el resultado no es un artefacto de probar 486 configuraciones.
 - **Fuera de muestra:** en walk-forward el Sharpe es 0.63 frente a 0.44 de comprar-y-mantener, con caída máxima -19% vs -57%.
 - **Conclusión:** el valor del sistema está confirmado sobre todo en **protección frente a caídas** con rentabilidad comparable; su capacidad de "predecir subidas" es real pero modesta. Es un copiloto de gestión de riesgo, no una bola de cristal.

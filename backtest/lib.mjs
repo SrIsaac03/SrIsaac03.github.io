@@ -38,13 +38,27 @@ function stateAt(cache, i, params) {
   return { price, regime, rsi: cache.rsi[i], vol: cache.vol[i], drawdown: cache.dd[i], distSmaLong: price / smaL - 1 };
 }
 
-// Señal de timing para cada día de la serie (null durante el calentamiento)
+// Señal de timing para cada día de la serie (null durante el calentamiento).
+// Aplica la misma histéresis (params.signalPersistence) que la app, para que los
+// backtests reflejen el comportamiento real que ve el usuario.
 export function computeTimingSeries(cache, params) {
-  const out = new Array(cache.values.length).fill(null);
+  const raw = new Array(cache.values.length).fill(null);
   for (let i = 0; i < cache.values.length; i++) {
     const st = stateAt(cache, i, params);
     if (!st || st.rsi == null || st.vol == null) continue;
-    out[i] = timingSignal(st, params, 0).signal;
+    raw[i] = timingSignal(st, params, 0).signal;
+  }
+  const k = params.signalPersistence || 1;
+  if (k <= 1) return raw;
+  const out = raw.slice();
+  let cur = null, cand = null, run = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const s = raw[i];
+    if (s == null) { out[i] = cur; continue; }
+    if (cur == null) { cur = s; cand = s; run = 0; out[i] = cur; continue; }
+    if (s === cand) run++; else { cand = s; run = 1; }
+    if (cand !== cur && run >= k) cur = cand;
+    out[i] = cur;
   }
   return out;
 }

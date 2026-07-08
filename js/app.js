@@ -668,13 +668,21 @@ function viewMercado() {
   $app.innerHTML = '';
   $app.appendChild(frag);
 
-  // señal del semáforo en cada día del tramo visible → bandas de color
-  const winSignals = [];
-  for (let i = from; i <= market.lastIndex; i++) {
-    const s = market.indexAnalyzer.stateAt(i);
-    const t = s ? timingSignal(s, DEFAULT_PARAMS, 0) : null;
-    winSignals.push(t ? t.signal : null);
+  // señal confirmada (histéresis) en cada día del tramo visible → bandas de color.
+  // FSM en una sola pasada: arranca 90 sesiones antes para estabilizar el estado.
+  const warm = Math.max(0, from - 90);
+  const k = DEFAULT_PARAMS.signalPersistence || 1;
+  const conf = new Array(market.lastIndex + 1).fill(null);
+  let cur = null, cand = null, run = 0;
+  for (let i = warm; i <= market.lastIndex; i++) {
+    const st = market.indexAnalyzer.stateAt(i);
+    const rawSig = st ? timingSignal(st, DEFAULT_PARAMS, 0)?.signal : null;
+    if (rawSig == null) { conf[i] = cur; continue; }
+    if (cur == null) { cur = rawSig; cand = rawSig; run = 0; }
+    else { if (rawSig === cand) run++; else { cand = rawSig; run = 1; } if (cand !== cur && run >= k) cur = cand; }
+    conf[i] = cur;
   }
+  const winSignals = conf.slice(from, market.lastIndex + 1);
   lineChart(document.getElementById('chart'), {
     dates: market.dates.slice(from, market.lastIndex + 1),
     values: market.sp500.slice(from, market.lastIndex + 1),

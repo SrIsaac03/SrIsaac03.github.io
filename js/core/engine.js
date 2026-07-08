@@ -22,6 +22,7 @@ export const DEFAULT_PARAMS = {
   volHigh: 0.25,       // volatilidad anualizada "alta"
   volExtreme: 0.40,    // volatilidad de pánico
   ddDeep: -0.30,       // caída profunda desde máximos (oportunidad contrarian con DCA)
+  signalPersistence: 3, // histéresis: confirmar la señal N sesiones antes de cambiar
   topN: 5,             // nº de activos candidatos por recomendación
   fwdHorizon: 63,      // horizonte de evaluación (~3 meses de sesiones)
 };
@@ -113,6 +114,41 @@ export function timingSignal(state, params = DEFAULT_PARAMS, timingCaution = 0) 
   return { signal, mode, reasons };
 }
 
+const MODE_OF = { green: 'invertir', amber: 'escalonar', red: 'esperar' };
+
+// Señal CONFIRMADA con histéresis: la señal oficial solo cambia cuando la cruda se
+// mantiene `signalPersistence` sesiones seguidas. Reduce los vaivenes (baja fricción)
+// sin perder la protección frente a caídas. Recorre una ventana previa suficiente
+// para que el estado se estabilice y devuelve el objeto de timing del día.
+export function confirmedTiming(indexAnalyzer, i, params = DEFAULT_PARAMS, timingCaution = 0) {
+  const todayState = indexAnalyzer.stateAt(i);
+  const todayRaw = todayState ? timingSignal(todayState, params, timingCaution) : null;
+  const k = params.signalPersistence || 1;
+  if (!todayRaw || k <= 1) return todayRaw;
+
+  let cur = null, cand = null, run = 0;
+  for (let j = Math.max(0, i - 90); j <= i; j++) {
+    const st = indexAnalyzer.stateAt(j);
+    if (!st) continue;
+    const raw = timingSignal(st, params, timingCaution)?.signal;
+    if (raw == null) continue;
+    if (cur == null) { cur = raw; cand = raw; run = 0; continue; }
+    if (raw === cand) run++; else { cand = raw; run = 1; }
+    if (cand !== cur && run >= k) cur = cand;
+  }
+  if (cur == null || cur === todayRaw.signal) return todayRaw;
+  // la señal cruda de hoy aún no está confirmada: mantenemos la oficial y lo explicamos
+  return {
+    signal: cur,
+    mode: MODE_OF[cur],
+    reasons: [
+      `La señal técnica apunta a «${MODE_OF[todayRaw.signal]}», pero la mantenemos en «${MODE_OF[cur]}» hasta que se confirme ${k} sesiones seguidas (evitamos vaivenes).`,
+      ...todayRaw.reasons,
+    ],
+    pendingRaw: todayRaw.signal,
+  };
+}
+
 // ---------- Etapa 1b: ranking de activos (momentum ajustado por riesgo) ----------
 
 export function rankAssets(candidates, i, adjustments) {
@@ -181,9 +217,10 @@ export function generateRecommendations(ctx) {
   const adj = computeFeedbackAdjustments(ctx.history || [], ctx.now || Date.now());
   const effScore = Math.max(0, Math.min(100, ctx.profile.score + adj.riskShift));
 
-  // Etapa 1: estado del mercado (índice = referencia macro del semáforo)
+  // Etapa 1: estado del mercado (índice = referencia macro del semáforo).
+  // Señal confirmada con histéresis para no cambiar de recomendación por vaivenes.
   const idxState = ctx.indexAnalyzer.stateAt(i);
-  const timing = timingSignal(idxState, p, adj.timingCaution);
+  const timing = confirmedTiming(ctx.indexAnalyzer, i, p, adj.timingCaution);
   if (!timing) return { timing: null, recommendations: [], marketState: idxState };
 
   // Etapa 1b: ranking del universo (ctx.seriesFor decide qué activos tienen

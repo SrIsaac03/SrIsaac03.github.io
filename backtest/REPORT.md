@@ -5,7 +5,7 @@
 Parámetros elegidos por búsqueda en rejilla (486 configuraciones) **solo con datos 1991–2010** y
 validados fuera de muestra en 2011–2022. La liquidez rinde 0% (conservador).
 
-**Parámetros ganadores:** {"smaLong":200,"smaShort":50,"rsiPeriod":14,"rsiOverbought":70,"rsiOversold":35,"volWindow":30,"volHigh":0.25,"volExtreme":0.4,"ddDeep":-0.3,"topN":5,"fwdHorizon":63}
+**Parámetros ganadores:** {"smaLong":200,"smaShort":50,"rsiPeriod":14,"rsiOverbought":70,"rsiOversold":35,"volWindow":30,"volHigh":0.25,"volExtreme":0.4,"ddDeep":-0.3,"signalPersistence":3,"topN":5,"fwdHorizon":63}
 
 ## 1. Estrategia guiada por el semáforo vs. comprar-y-mantener
 
@@ -13,11 +13,11 @@ Exposición: verde = 100% invertido · ámbar = 50% · rojo = 0% (liquidez).
 
 | Período | | CAGR | Volatilidad | Sharpe | Caída máx. |
 |---|---|---|---|---|---|
-| **Entrenamiento 1991–2010** | Semáforo | 8.8% | 11.4% | 0.80 | -17% |
+| **Entrenamiento 1991–2010** | Semáforo | 8.3% | 11.5% | 0.75 | -18% |
 | | Comprar y mantener | 6.9% | 18.7% | 0.45 | -57% |
-| **Validación 2011–2026 (fuera de muestra)** | Semáforo | 8.3% | 11.4% | 0.76 | -19% |
+| **Validación 2011–2026 (fuera de muestra)** | Semáforo | 8.1% | 11.6% | 0.73 | -19% |
 | | Comprar y mantener | 12.2% | 17.2% | 0.76 | -34% |
-| **Período completo 1991–2026** | Semáforo | 8.6% | 11.4% | 0.78 | -19% |
+| **Período completo 1991–2026** | Semáforo | 8.2% | 11.5% | 0.74 | -19% |
 | | Comprar y mantener | 9.2% | 18.1% | 0.58 | -57% |
 
 ## 2. Acierto de la señal (¿qué pasó en los 3/6 meses siguientes?)
@@ -27,17 +27,17 @@ La base es el % incondicional (el mercado sube la mayoría de los períodos: sup
 
 | Período | Señal | Días | Acierto 3m | Retorno medio 3m | Acierto 6m |
 |---|---|---|---|---|---|
-| Entrenamiento 1991–2010 | 🟢 verde | 2923 | 70.1% | 2.5% | 79.8% |
-| Entrenamiento 1991–2010 | 🟡 ámbar | 953 | 78.2% | 4.6% | 78.0% |
-| Entrenamiento 1991–2010 | 🔴 rojo | 1103 | 45.5% | -2.0% | 40.1% |
+| Entrenamiento 1991–2010 | 🟢 verde | 2962 | 70.1% | 2.5% | 79.8% |
+| Entrenamiento 1991–2010 | 🟡 ámbar | 899 | 77.6% | 4.6% | 76.7% |
+| Entrenamiento 1991–2010 | 🔴 rojo | 1118 | 46.8% | -1.8% | 41.4% |
 | Entrenamiento 1991–2010 | *base (todos)* | 4979 | 66.2% | 1.9% | 70.9% |
-| Validación 2011–2026 (fuera de muestra) | 🟢 verde | 2682 | 75.5% | 2.7% | 77.7% |
-| Validación 2011–2026 (fuera de muestra) | 🟡 ámbar | 640 | 72.5% | 2.6% | 83.3% |
-| Validación 2011–2026 (fuera de muestra) | 🔴 rojo | 514 | 75.3% | 5.7% | 83.9% |
+| Validación 2011–2026 (fuera de muestra) | 🟢 verde | 2708 | 75.4% | 2.7% | 77.4% |
+| Validación 2011–2026 (fuera de muestra) | 🟡 ámbar | 601 | 72.4% | 2.6% | 85.1% |
+| Validación 2011–2026 (fuera de muestra) | 🔴 rojo | 527 | 75.5% | 5.6% | 83.5% |
 | Validación 2011–2026 (fuera de muestra) | *base (todos)* | 3836 | 75.0% | 3.1% | 79.4% |
-| Período completo 1991–2026 | 🟢 verde | 5643 | 72.9% | 2.6% | 78.9% |
-| Período completo 1991–2026 | 🟡 ámbar | 1618 | 76.3% | 3.9% | 80.7% |
-| Período completo 1991–2026 | 🔴 rojo | 1617 | 55.0% | 0.4% | 55.5% |
+| Período completo 1991–2026 | 🟢 verde | 5705 | 72.8% | 2.6% | 78.8% |
+| Período completo 1991–2026 | 🟡 ámbar | 1528 | 76.0% | 3.9% | 80.7% |
+| Período completo 1991–2026 | 🔴 rojo | 1645 | 56.0% | 0.5% | 56.4% |
 | Período completo 1991–2026 | *base (todos)* | 8878 | 70.2% | 2.4% | 74.9% |
 
 **Lectura:** el valor del semáforo no está en "predecir" el mercado sino en (a) que los días verdes
@@ -50,9 +50,9 @@ Aportación mensual constante. "Con timing": verde invierte todo lo acumulado, �
 
 | Período | Valor final DCA fija | Valor final DCA con timing | Ratio |
 |---|---|---|---|
-| Entrenamiento 1991–2010 | 382.8× | 390.1× | 1.019 |
-| Validación 2011–2026 (fuera de muestra) | 557.3× | 551.1× | 0.989 |
-| Período completo 1991–2026 | 2834.9× | 2873.7× | 1.014 |
+| Entrenamiento 1991–2010 | 382.8× | 389.9× | 1.019 |
+| Validación 2011–2026 (fuera de muestra) | 557.3× | 551.0× | 0.989 |
+| Período completo 1991–2026 | 2834.9× | 2871.4× | 1.013 |
 
 ## 4. Selección de activos (momentum/volatilidad, top-5 mensual vs. equiponderado)
 

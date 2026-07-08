@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { sma, ema, rsi, macd, rollingVolatility, drawdownFromHigh, momentum12m1, dailyReturns } from '../js/core/indicators.js';
-import { SeriesAnalyzer, timingSignal, allocate, eligibilityFilter, rankAssets, generateRecommendations, DEFAULT_PARAMS } from '../js/core/engine.js';
+import { SeriesAnalyzer, timingSignal, confirmedTiming, allocate, eligibilityFilter, rankAssets, generateRecommendations, DEFAULT_PARAMS } from '../js/core/engine.js';
 import { scoreTest, QUESTIONS, CATEGORIES } from '../js/core/profile.js';
 import { BROKERS, getBroker, brokerTerms } from '../js/core/brokers.js';
 import { computeFeedbackAdjustments, isSuppressed, REJECT_REASONS } from '../js/core/feedback.js';
@@ -193,6 +193,20 @@ test('Bajista → rojo', () => assert(timingSignal(S({ regime: 'bajista' })).sig
 test('Bajista con caída profunda y RSI en sobreventa → ámbar (DCA contrarian)', () =>
   assert(timingSignal(S({ regime: 'bajista', drawdown: -0.35, rsi: 25 })).signal === 'amber'));
 test('Transición → ámbar', () => assert(timingSignal(S({ regime: 'transicion' })).signal === 'amber'));
+
+test('confirmedTiming: la histéresis retrasa el cambio hasta confirmarlo N sesiones', () => {
+  const green = { regime: 'alcista', rsi: 55, vol: 0.15, drawdown: -0.02, distSmaLong: 0.05, price: 100 };
+  const red = { regime: 'bajista', rsi: 45, vol: 0.15, drawdown: -0.10, distSmaLong: -0.05, price: 90 };
+  const mk = (redDays) => ({ stateAt: (j) => (j > 100 - redDays ? red : green) });
+  const p3 = { ...DEFAULT_PARAMS, signalPersistence: 3 };
+  // 1 día rojo al final: no confirma → sigue verde, con la señal cruda pendiente
+  const a = confirmedTiming(mk(1), 100, p3);
+  assert(a.signal === 'green' && a.pendingRaw === 'red', JSON.stringify(a));
+  // 3 días rojos seguidos: confirma el cambio a rojo
+  assert(confirmedTiming(mk(3), 100, p3).signal === 'red');
+  // persistence=1 equivale a la señal cruda inmediata
+  assert(confirmedTiming(mk(1), 100, { ...DEFAULT_PARAMS, signalPersistence: 1 }).signal === 'red');
+});
 
 console.log('— Allocation (solo porcentajes) —');
 
