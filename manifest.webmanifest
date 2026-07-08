@@ -1,0 +1,17 @@
+{
+  "name": "Copiloto de Inversión",
+  "short_name": "Copiloto",
+  "description": "Recomendaciones de inversión por porcentajes, con timing de mercado y filtradas por tu bróker. No-custodial.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f9f9f7",
+  "theme_color": "#2a78d6",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232a78d6'/><text x='50' y='72' font-size='60' text-anchor='middle'>🧭</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
