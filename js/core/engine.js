@@ -37,6 +37,10 @@ export class SeriesAnalyzer {
     this.rsi = rsi(values, params.rsiPeriod);
     this.vol = rollingVolatility(values, params.volWindow);
     this.dd = drawdownFromHigh(values, 252);
+    // último índice con dato real (las series pueden traer cola de nulls si
+    // su fuente de actualización falló una noche)
+    this.lastValid = values.length - 1;
+    while (this.lastValid > 0 && values[this.lastValid] == null) this.lastValid--;
   }
 
   stateAt(i) {
@@ -114,8 +118,9 @@ export function timingSignal(state, params = DEFAULT_PARAMS, timingCaution = 0) 
 export function rankAssets(candidates, i, adjustments) {
   const scored = [];
   for (const c of candidates) {
-    // las series en vivo (cripto) tienen su propio calendario: se evalúan en su último punto
-    const ci = Math.min(i, c.analyzer.values.length - 1);
+    // cada serie se evalúa como muy tarde en su último dato real (cripto tiene
+    // su propio calendario; una acción con actualización fallida no desaparece)
+    const ci = Math.min(i, c.analyzer.lastValid);
     const st = c.analyzer.stateAt(ci);
     if (!st || st.momentum == null || st.vol == null || st.vol === 0) continue;
     if (adjustments && isSuppressed(adjustments, c.asset.id)) continue;

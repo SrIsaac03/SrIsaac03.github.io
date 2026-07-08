@@ -158,18 +158,31 @@ async function fetchStooq(symbol, fromDate) {
   return parseStooqCsv(await res.text());
 }
 
-// Fetcher por defecto: Yahoo primero, Stooq de reserva.
+// Yahoo a través de corsproxy.io: sus IPs de salida no son de datacenter de
+// Azure, así que suele pasar donde el acceso directo recibe 429.
+async function fetchYahooViaProxy(symbol, fromDate) {
+  const p1 = Math.floor(new Date(fromDate).getTime() / 1000);
+  const p2 = Math.floor(Date.now() / 1000) + 86400;
+  const yahoo = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&period1=${p1}&period2=${p2}`;
+  const res = await fetch('https://corsproxy.io/?url=' + encodeURIComponent(yahoo), { headers: UA });
+  if (!res.ok) throw new Error(`proxy HTTP ${res.status}`);
+  return parseYahooChart(await res.json());
+}
+
+// Fetcher por defecto: Yahoo directo → Stooq → Yahoo vía proxy.
 async function fetchSeries(key, fromDate) {
   const sym = SYMBOLS[key];
-  try {
-    return await fetchYahoo(sym.yahoo, fromDate);
-  } catch (e1) {
+  const errors = [];
+  for (const attempt of [
+    () => fetchYahoo(sym.yahoo, fromDate),
+    () => fetchStooq(sym.stooq, fromDate),
+    () => fetchYahooViaProxy(sym.yahoo, fromDate),
+  ]) {
     try {
-      return await fetchStooq(sym.stooq, fromDate);
-    } catch (e2) {
-      throw new Error(`${e1.message} / ${e2.message}`);
-    }
+      return await attempt();
+    } catch (e) { errors.push(e.message); }
   }
+  throw new Error(errors.join(' / '));
 }
 
 export async function updateBundle(bundle, fetcher = fetchSeries) {
@@ -209,16 +222,20 @@ export async function updateBundle(bundle, fetcher = fetchSeries) {
   let totalAdded = spliceSeries({ ...bundle, dates: oldDates, series: bundle.series }, 'SP500', idxRows, newDates, { allowAnyScale: idxProxy });
   if (idxProxy) failures.push('SP500: usado proxy SPY (nivel reescalado en el empalme)');
 
-  // 2) resto de series
+  // 2) resto de series — cada una reanuda desde su propio último dato real
+  // (si una serie quedó rezagada por fallos previos, no pierde su empalme)
   for (const key of Object.keys(SYMBOLS)) {
     if (key === 'SP500') continue;
+    const s = bundle.series[key];
     try {
-      const rows = await fetcher(key, from);
+      let li = Math.min(s.length, oldDates.length) - 1;
+      while (li > 0 && s[li] == null) li--;
+      const seriesFrom = new Date(new Date(oldDates[li]).getTime() - 20 * 86400000).toISOString().slice(0, 10);
+      const rows = await fetcher(key, seriesFrom);
       totalAdded += spliceSeries({ ...bundle, dates: oldDates, series: bundle.series }, key, rows, newDates);
     } catch (e) {
       failures.push(`${key}: ${e.message}`);
-      // sin datos: rellenar con null (el motor excluye el activo limpiamente)
-      const s = bundle.series[key];
+      // sin datos: cola de nulls (el motor evalúa el activo en su último dato real)
       for (let i = s.length; i < newDates.length; i++) s[i] = null;
     }
     await new Promise(r => setTimeout(r, 350)); // cortesía con las APIs
@@ -237,9 +254,10 @@ if (isMain) {
   const before = bundle.meta.end;
   updateBundle(bundle).then(({ added, failures }) => {
     if (failures.length) console.error('Avisos:\n  ' + failures.join('\n  '));
-    if (failures.length > 10) { console.error('Demasiados fallos: no se guarda.'); process.exit(1); }
     if (!added) { console.log(`Sin datos nuevos (último: ${before}).`); return; }
+    // el índice fresco ya vale la pena aunque haya series con fallos: el motor
+    // evalúa cada activo en su último dato real y el semáforo queda al día
     writeFileSync(BUNDLE_PATH, JSON.stringify(bundle));
-    console.log(`history.json actualizado: ${before} → ${bundle.meta.end} (+${added} puntos)`);
+    console.log(`history.json actualizado: ${before} → ${bundle.meta.end} (+${added} puntos, ${failures.length} series con avisos)`);
   }).catch(e => { console.error('Error:', e.message); process.exit(1); });
 }

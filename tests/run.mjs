@@ -293,6 +293,20 @@ test('El bróker filtra: BBVA (sin ETFs ni acciones USA baratas) vs IBKR', () =>
   for (const r of bbva.recommendations) assert(r.assetClass !== 'etf', 'BBVA no ofrece ETFs en el catálogo MVP');
 });
 
+test('Una serie con cola de nulls se evalúa en su último dato real (no desaparece)', () => {
+  const clean = Array.from({ length: 400 }, (_, i) => 100 * Math.exp(0.001 * i));
+  const stale = [...clean, ...new Array(50).fill(null)];
+  const a1 = new SeriesAnalyzer(clean);
+  const a2 = new SeriesAnalyzer(stale);
+  assert(a2.lastValid === 399, `lastValid=${a2.lastValid}`);
+  const r = rankAssets([
+    { asset: { id: 'CLEAN', assetClass: 'equity' }, analyzer: a1 },
+    { asset: { id: 'STALE', assetClass: 'equity' }, analyzer: a2 },
+  ], 449, null);
+  assert(r.length === 2, `solo ${r.length} activos rankeados`);
+  approx(r[0].score, r[1].score, 1e-9, 'misma serie → misma puntuación');
+});
+
 console.log('— Actualizador de datos (empalme Stooq) —');
 
 const { parseStooqCsv, parseYahooChart, parseFredCsv, spliceSeries, updateBundle } = await import('../tools/update-data.mjs');
