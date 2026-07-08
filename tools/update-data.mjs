@@ -38,7 +38,9 @@ export function parseStooqCsv(text) {
 
 // Empalma `rows` (fecha ascendente) al final de la serie `key` del bundle.
 // `newDates` es el calendario maestro ya extendido. Devuelve nº de puntos añadidos.
-export function spliceSeries(bundle, key, rows, newDates) {
+// opts.allowAnyScale: para instrumentos proxy (p.ej. SPY como sustituto del
+// índice) el nivel difiere mucho; el factor de empalme lo normaliza igualmente.
+export function spliceSeries(bundle, key, rows, newDates, opts = {}) {
   const series = bundle.series[key];
   const oldLen = bundle.dates.length;
   // último valor no nulo del histórico y su fecha
@@ -56,7 +58,7 @@ export function spliceSeries(bundle, key, rows, newDates) {
     if (sv > 0 && series[i] != null) { scale = series[i] / sv; break; }
   }
   if (scale == null) throw new Error(`${key}: sin fecha de solape con Stooq`);
-  if (Math.abs(scale - 1) > MAX_SPLICE_DEVIATION) {
+  if (!opts.allowAnyScale && Math.abs(scale - 1) > MAX_SPLICE_DEVIATION) {
     throw new Error(`${key}: desviación de empalme sospechosa (factor ${scale.toFixed(3)})`);
   }
 
@@ -80,8 +82,9 @@ export function spliceSeries(bundle, key, rows, newDates) {
 async function fetchStooq(symbol, fromDate) {
   const d1 = fromDate.replace(/-/g, '');
   const d2 = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(symbol)}&i=d&d1=${d1}&d2=${d2}`;
-  const res = await fetch(url);
+  // símbolo sin codificar: Stooq devuelve HTML si recibe %5E en lugar de ^
+  const url = `https://stooq.com/q/d/l/?s=${symbol}&i=d&d1=${d1}&d2=${d2}`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) copiloto-inversion-data-updater' } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return parseStooqCsv(await res.text());
 }
@@ -90,8 +93,14 @@ export async function updateBundle(bundle, fetcher = fetchStooq) {
   const lastDate = bundle.dates[bundle.dates.length - 1];
   const from = new Date(new Date(lastDate).getTime() - 20 * 86400000).toISOString().slice(0, 10);
 
-  // 1) el índice define el calendario maestro nuevo
-  const idxRows = await fetcher(STOOQ_SYMBOLS.SP500, from);
+  // 1) el índice define el calendario maestro nuevo (con proxy SPY de reserva)
+  let idxRows, idxProxy = false;
+  try {
+    idxRows = await fetcher(STOOQ_SYMBOLS.SP500, from);
+  } catch (e) {
+    idxRows = await fetcher('spy.us', from); // SPY replica el índice a ~1/10 del nivel
+    idxProxy = true;
+  }
   const newDates = [...bundle.dates];
   for (const r of idxRows) if (r.date > lastDate) newDates.push(r.date);
   if (newDates.length === bundle.dates.length) return { added: 0, failures: [] };
@@ -99,7 +108,8 @@ export async function updateBundle(bundle, fetcher = fetchStooq) {
   const oldDates = bundle.dates;
   bundle.dates = newDates;
   const failures = [];
-  let totalAdded = spliceSeries({ ...bundle, dates: oldDates, series: bundle.series }, 'SP500', idxRows, newDates);
+  let totalAdded = spliceSeries({ ...bundle, dates: oldDates, series: bundle.series }, 'SP500', idxRows, newDates, { allowAnyScale: idxProxy });
+  if (idxProxy) failures.push('SP500: usado proxy SPY (nivel reescalado en el empalme)');
 
   // 2) resto de series
   for (const [key, sym] of Object.entries(STOOQ_SYMBOLS)) {
