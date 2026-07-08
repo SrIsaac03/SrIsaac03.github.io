@@ -127,7 +127,14 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-const fmtPct = (x, d = 1) => x == null ? '—' : (x * 100).toFixed(d) + '%';
+// Formato numérico español (coma decimal, punto de millares).
+const _pctFmt = {};
+const fmtPct = (x, d = 1) => {
+  if (x == null) return '—';
+  const f = _pctFmt[d] || (_pctFmt[d] = new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }));
+  return f.format(x * 100) + '%';
+};
+const fmtNum0 = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
 
 // ---------- Navegación ----------
 
@@ -192,11 +199,25 @@ function render() {
 
 const ob = { step: 0, answers: {}, capitalBandId: null, incomeBandId: null, brokerId: null, pfName: 'Mi cartera', pfRisk: null };
 
+const OB_STEP_NAMES = ['', 'Test de riesgo', 'Tus finanzas', 'Tu bróker', 'Tu portafolio'];
+
 function renderOnboarding() {
   const steps = [obWelcome, obTest, obFinances, obBroker, obPortfolio];
   $app.innerHTML = '';
-  $app.appendChild(h('<div class="fade-in" id="ob"></div>'));
-  steps[ob.step](document.getElementById('ob'));
+  const container = h('<div class="fade-in" id="ob"></div>').firstElementChild;
+  // indicador de progreso (pasos 1-4; la bienvenida no lo muestra)
+  if (ob.step >= 1) {
+    const pctDone = (ob.step / (steps.length - 1)) * 100;
+    container.appendChild(h(`
+      <div class="ob-steps" role="group" aria-label="Progreso del onboarding: paso ${ob.step} de ${steps.length - 1}, ${OB_STEP_NAMES[ob.step]}">
+        <div class="ob-steps-bar"><div style="width:${pctDone}%"></div></div>
+        <div class="ob-steps-label small muted">Paso ${ob.step} de ${steps.length - 1} · ${OB_STEP_NAMES[ob.step]}</div>
+      </div>`));
+  }
+  const slot = h('<div></div>').firstElementChild;
+  container.appendChild(slot);
+  $app.appendChild(container);
+  steps[ob.step](slot);
   decorateA11y();
 }
 
@@ -689,7 +710,7 @@ function viewMercado() {
     values: market.sp500.slice(from, market.lastIndex + 1),
     signals: winSignals,
     label: 'Evolución del S&P 500 con las bandas del semáforo',
-    formatValue: v => v.toFixed(0),
+    formatValue: v => fmtNum0.format(v),
   });
 
   const cb = document.getElementById('cryptoBody');

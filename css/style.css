@@ -211,6 +211,11 @@ button.btn.sm { padding: 8px 14px; font-size: 14px; }
 .progress { height: 6px; background: var(--grid); border-radius: 999px; overflow: hidden; margin: 10px 0 4px; }
 .progress > div { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.25s; }
 
+.ob-steps { margin: 10px 2px 4px; }
+.ob-steps-bar { height: 5px; background: var(--grid); border-radius: 999px; overflow: hidden; }
+.ob-steps-bar > div { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.3s; }
+.ob-steps-label { margin-top: 5px; }
+
 /* ---------- Gráfico ---------- */
 
 .chart-wrap { position: relative; overflow-x: auto; }
