@@ -1,8 +1,9 @@
-// Actualiza data/history.json con datos frescos de Stooq (gratuito, sin clave).
+// Actualiza data/history.json con datos frescos (gratuito, sin clave).
 // Pensado para ejecutarse en GitHub Actions cada noche: extiende cada serie
-// desde su último dato hasta hoy, empalmando niveles en la fecha de solape
-// (el histórico base está ajustado por dividendos y Stooq no: el factor de
-// empalme garantiza continuidad; los retornos nuevos son de precio).
+// desde su último dato hasta hoy, empalmando niveles en la fecha de solape.
+// Fuente primaria: Yahoo Finance v8 chart (JSON, cierres ajustados por
+// dividendos, accesible desde servidores). Reserva: Stooq CSV (bloquea
+// algunas IPs de datacenter devolviendo HTML: por eso no es la primaria).
 // Uso: node tools/update-data.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -11,16 +12,21 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUNDLE_PATH = join(root, 'data/history.json');
 
-// serie del bundle → símbolo Stooq
-export const STOOQ_SYMBOLS = {
-  SP500: '^spx',
-  AAPL: 'aapl.us', AMD: 'amd.us', BAC: 'bac.us', BBY: 'bby.us', CVX: 'cvx.us',
-  GE: 'ge.us', HD: 'hd.us', JNJ: 'jnj.us', JPM: 'jpm.us', KO: 'ko.us',
-  LLY: 'lly.us', MRK: 'mrk.us', MSFT: 'msft.us', PEP: 'pep.us', PFE: 'pfe.us',
-  PG: 'pg.us', RRC: 'rrc.us', UNH: 'unh.us', WMT: 'wmt.us', XOM: 'xom.us',
-  ETF_MTUM: 'mtum.us', ETF_QUAL: 'qual.us', ETF_SIZE: 'size.us',
-  ETF_USMV: 'usmv.us', ETF_VLUE: 'vlue.us',
+// serie del bundle → ticker (Yahoo usa el ticker tal cual; Stooq, minúsculas + .us)
+const TICKERS = ['AAPL', 'AMD', 'BAC', 'BBY', 'CVX', 'GE', 'HD', 'JNJ', 'JPM', 'KO',
+  'LLY', 'MRK', 'MSFT', 'PEP', 'PFE', 'PG', 'RRC', 'UNH', 'WMT', 'XOM',
+  'ETF_MTUM', 'ETF_QUAL', 'ETF_SIZE', 'ETF_USMV', 'ETF_VLUE'];
+
+export const SYMBOLS = {
+  SP500: { yahoo: '%5EGSPC', stooq: '%5Espx' },
+  ...Object.fromEntries(TICKERS.map(k => {
+    const t = k.replace('ETF_', '');
+    return [k, { yahoo: t, stooq: t.toLowerCase() + '.us' }];
+  })),
 };
+
+// si el índice falla, SPY (ETF que lo replica a ~1/10 del nivel) como proxy
+const INDEX_PROXY = { yahoo: 'SPY', stooq: 'spy.us' };
 
 const MAX_SPLICE_DEVIATION = 0.25; // si el nivel difiere >25% en el solape, algo va mal
 
@@ -79,26 +85,65 @@ export function spliceSeries(bundle, key, rows, newDates, opts = {}) {
   return added;
 }
 
+const UA = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0' };
+
+export function parseYahooChart(data) {
+  const r = data?.chart?.result?.[0];
+  if (!r) throw new Error('respuesta Yahoo inesperada: ' + JSON.stringify(data?.chart?.error || data).slice(0, 80));
+  const closes = r.indicators?.adjclose?.[0]?.adjclose || r.indicators?.quote?.[0]?.close;
+  if (!closes) throw new Error('Yahoo sin cierres');
+  const rows = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (closes[i] != null) {
+      rows.push({ date: new Date(r.timestamp[i] * 1000).toISOString().slice(0, 10), close: closes[i] });
+    }
+  }
+  return rows;
+}
+
+async function fetchYahoo(symbol, fromDate) {
+  const p1 = Math.floor(new Date(fromDate).getTime() / 1000);
+  const p2 = Math.floor(Date.now() / 1000) + 86400;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&period1=${p1}&period2=${p2}&events=div%7Csplit`;
+  const res = await fetch(url, { headers: UA });
+  if (!res.ok) throw new Error(`Yahoo HTTP ${res.status}`);
+  return parseYahooChart(await res.json());
+}
+
 async function fetchStooq(symbol, fromDate) {
   const d1 = fromDate.replace(/-/g, '');
   const d2 = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  // símbolo sin codificar: Stooq devuelve HTML si recibe %5E en lugar de ^
   const url = `https://stooq.com/q/d/l/?s=${symbol}&i=d&d1=${d1}&d2=${d2}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) copiloto-inversion-data-updater' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const res = await fetch(url, { headers: UA });
+  if (!res.ok) throw new Error(`Stooq HTTP ${res.status}`);
   return parseStooqCsv(await res.text());
 }
 
-export async function updateBundle(bundle, fetcher = fetchStooq) {
+// Fetcher por defecto: Yahoo primero, Stooq de reserva.
+async function fetchSeries(key, fromDate) {
+  const sym = SYMBOLS[key];
+  try {
+    return await fetchYahoo(sym.yahoo, fromDate);
+  } catch (e1) {
+    try {
+      return await fetchStooq(sym.stooq, fromDate);
+    } catch (e2) {
+      throw new Error(`${e1.message} / ${e2.message}`);
+    }
+  }
+}
+
+export async function updateBundle(bundle, fetcher = fetchSeries) {
   const lastDate = bundle.dates[bundle.dates.length - 1];
   const from = new Date(new Date(lastDate).getTime() - 20 * 86400000).toISOString().slice(0, 10);
 
   // 1) el índice define el calendario maestro nuevo (con proxy SPY de reserva)
   let idxRows, idxProxy = false;
   try {
-    idxRows = await fetcher(STOOQ_SYMBOLS.SP500, from);
-  } catch (e) {
-    idxRows = await fetcher('spy.us', from); // SPY replica el índice a ~1/10 del nivel
+    idxRows = await fetcher('SP500', from);
+  } catch {
+    // SPY como proxy: mismo movimiento, nivel ~1/10 (el empalme lo reescala)
+    idxRows = await fetchYahoo(INDEX_PROXY.yahoo, from).catch(() => fetchStooq(INDEX_PROXY.stooq, from));
     idxProxy = true;
   }
   const newDates = [...bundle.dates];
@@ -112,10 +157,10 @@ export async function updateBundle(bundle, fetcher = fetchStooq) {
   if (idxProxy) failures.push('SP500: usado proxy SPY (nivel reescalado en el empalme)');
 
   // 2) resto de series
-  for (const [key, sym] of Object.entries(STOOQ_SYMBOLS)) {
+  for (const key of Object.keys(SYMBOLS)) {
     if (key === 'SP500') continue;
     try {
-      const rows = await fetcher(sym, from);
+      const rows = await fetcher(key, from);
       totalAdded += spliceSeries({ ...bundle, dates: oldDates, series: bundle.series }, key, rows, newDates);
     } catch (e) {
       failures.push(`${key}: ${e.message}`);
@@ -123,7 +168,7 @@ export async function updateBundle(bundle, fetcher = fetchStooq) {
       const s = bundle.series[key];
       for (let i = s.length; i < newDates.length; i++) s[i] = null;
     }
-    await new Promise(r => setTimeout(r, 400)); // cortesía con Stooq
+    await new Promise(r => setTimeout(r, 350)); // cortesía con las APIs
   }
 
   bundle.meta.end = newDates[newDates.length - 1];

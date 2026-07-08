@@ -295,11 +295,25 @@ test('El bróker filtra: BBVA (sin ETFs ni acciones USA baratas) vs IBKR', () =>
 
 console.log('— Actualizador de datos (empalme Stooq) —');
 
-const { parseStooqCsv, spliceSeries, updateBundle } = await import('../tools/update-data.mjs');
+const { parseStooqCsv, parseYahooChart, spliceSeries, updateBundle } = await import('../tools/update-data.mjs');
 
 test('parseStooqCsv extrae fechas y cierres, tolera CRLF', () => {
   const rows = parseStooqCsv('Date,Open,High,Low,Close,Volume\r\n2023-01-02,10,11,9,10.5,100\r\n2023-01-03,10.5,12,10,11,90\r\n');
   assert(rows.length === 2 && rows[1].close === 11, JSON.stringify(rows));
+});
+
+test('parseYahooChart usa adjclose y descarta nulls', () => {
+  const ts = [1672704000, 1672790400, 1672876800]; // 2023-01-03..05 UTC
+  const rows = parseYahooChart({ chart: { result: [{ timestamp: ts, indicators: { adjclose: [{ adjclose: [100, null, 102] }], quote: [{ close: [99, 100, 101] }] } }] } });
+  assert(rows.length === 2, JSON.stringify(rows));
+  assert(rows[0].date === '2023-01-03' && rows[0].close === 100);
+  assert(rows[1].close === 102);
+});
+
+test('parseYahooChart rechaza respuestas HTML/errores', () => {
+  let threw = false;
+  try { parseYahooChart({ chart: { error: { code: 'Not Found' } } }); } catch { threw = true; }
+  assert(threw);
 });
 
 test('spliceSeries empalma con factor de escala y respeta el calendario', () => {
@@ -329,8 +343,8 @@ test('updateBundle extiende el calendario con el índice y tolera fallos por ser
   const bundle = JSON.parse(readFileSync(join(root, 'data/history.json'), 'utf8'));
   const lastDate = bundle.dates[bundle.dates.length - 1];
   const spLast = bundle.series.SP500[bundle.series.SP500.length - 1];
-  const fakeFetcher = async (sym) => {
-    if (sym === '^spx') return [
+  const fakeFetcher = async (key) => {
+    if (key === 'SP500') return [
       { date: lastDate, close: spLast },
       { date: '2023-01-03', close: spLast * 1.01 },
       { date: '2023-01-04', close: spLast * 1.02 },
