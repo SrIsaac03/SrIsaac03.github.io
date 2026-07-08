@@ -137,13 +137,16 @@ await check('Suelo COVID (2020-03-23): el semáforo no es verde', async () => {
   if (/green/.test(cls)) throw new Error('verde en pleno crash');
 });
 
-await check('Mercado: gráfico SVG con tooltip y presets de máquina del tiempo', async () => {
+await check('Mercado: gráfico con bandas de señal, leyenda, tooltip y presets', async () => {
   await page.locator('nav.tabs button:has-text("Mercado")').click();
   await page.waitForSelector('.chart-wrap svg');
+  if (await page.locator('.chart-wrap .band').count() < 1) throw new Error('sin bandas de señal');
+  if (await page.locator('.chart-legend').count() !== 1) throw new Error('sin leyenda');
   const box = await page.locator('.chart-wrap svg').boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.waitForSelector('.chart-wrap .tooltip:visible', { timeout: 2000 });
   await page.waitForSelector('a[href="?fecha=2008-09-15"]');
+  await page.waitForSelector('a[href="backtest/RELIABILITY.md"]');
 });
 
 await check('Volver a hoy: degradación limpia sin APIs en vivo', async () => {
@@ -184,15 +187,15 @@ await check('A11y: navegación por teclado en las pestañas (flechas + roving ta
 await check('A11y: el modal atrapa el foco, se cierra con Escape y restaura el foco', async () => {
   await page.waitForSelector('[data-rej]');
   const rejBtn = page.locator('[data-rej]').first();
-  await rejBtn.focus();
   await rejBtn.click();
   await page.waitForSelector('.modal[role="dialog"][aria-modal="true"]');
-  // el foco está dentro del diálogo
-  const focusedInDialog = await page.evaluate(() => !!document.activeElement.closest('.modal'));
-  if (!focusedInDialog) throw new Error('el foco no entró en el diálogo');
-  await page.keyboard.press('Escape');
+  try {
+    // el foco entra en el diálogo (se fija en requestAnimationFrame → esperamos)
+    await page.waitForFunction(() => document.activeElement && document.activeElement.closest('.modal'), { timeout: 3000 });
+  } finally {
+    await page.keyboard.press('Escape'); // pase lo que pase, no dejar el modal abierto
+  }
   await page.waitForSelector('.modal', { state: 'detached', timeout: 3000 });
-  // tras cerrar, no debe quedar backdrop
   if (await page.locator('.modal-backdrop').count() !== 0) throw new Error('el modal no se cerró con Escape');
 });
 

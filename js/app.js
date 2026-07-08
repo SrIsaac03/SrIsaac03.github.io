@@ -6,7 +6,7 @@ import { ASSETS, getAsset } from './core/assets.js';
 import { BROKERS, getBroker } from './core/brokers.js';
 import { QUESTIONS, LIKERT, CATEGORIES, CAPITAL_BANDS, INCOME_BANDS, scoreTest } from './core/profile.js';
 import { REJECT_REASONS } from './core/feedback.js';
-import { SeriesAnalyzer, generateRecommendations, DEFAULT_PARAMS } from './core/engine.js';
+import { SeriesAnalyzer, generateRecommendations, timingSignal, DEFAULT_PARAMS } from './core/engine.js';
 import * as store from './core/store.js';
 import { bootstrapMarketData } from './data/providers.js';
 import { lineChart } from './ui/chart.js';
@@ -643,19 +643,30 @@ function viewMercado() {
     </div>
     <div class="card">
       <h2>¿Cómo de fiable es el semáforo?</h2>
-      <p class="small ink2">Backtest 1990–2022 con validación fuera de muestra: misma rentabilidad que comprar-y-mantener
-      (8,1% vs 7,9% anual) con <strong>un tercio de la caída máxima</strong> (-17% vs -57%). Los días con señal verde
-      subieron a 3 meses vista el 72% de las veces (base: 69%); los rojos, solo el 53%.
-      <a href="backtest/REPORT.md" style="color:var(--accent)">Informe completo</a>.</p>
+      <p class="small ink2">Es una <strong>herramienta de gestión de riesgo</strong>, no un oráculo. En validación
+      walk-forward (100% fuera de muestra, reoptimizada cada año) reduce la caída máxima a <strong>-19% vs -57%</strong>
+      de comprar-y-mantener con rentabilidad comparable, y recorta la caída en los 25/25 activos probados.
+      Con honestidad: su capacidad de predecir subidas a 3 meses no alcanza significancia estadística (p≈0,15);
+      su valor está en <strong>proteger de las grandes caídas</strong>.</p>
+      <p class="small"><a href="backtest/RELIABILITY.md" style="color:var(--accent)">Informe de fiabilidad</a> ·
+      <a href="backtest/REPORT.md" style="color:var(--accent)">Backtest completo</a></p>
     </div>
   </div>`);
   $app.innerHTML = '';
   $app.appendChild(frag);
 
+  // señal del semáforo en cada día del tramo visible → bandas de color
+  const winSignals = [];
+  for (let i = from; i <= market.lastIndex; i++) {
+    const s = market.indexAnalyzer.stateAt(i);
+    const t = s ? timingSignal(s, DEFAULT_PARAMS, 0) : null;
+    winSignals.push(t ? t.signal : null);
+  }
   lineChart(document.getElementById('chart'), {
     dates: market.dates.slice(from, market.lastIndex + 1),
     values: market.sp500.slice(from, market.lastIndex + 1),
-    label: 'Evolución del S&P 500, últimos dos años',
+    signals: winSignals,
+    label: 'Evolución del S&P 500 con las bandas del semáforo',
     formatValue: v => v.toFixed(0),
   });
 
