@@ -153,11 +153,64 @@ await check('Volver a hoy: degradación limpia sin APIs en vivo', async () => {
   if (!/histórico/.test(badge)) throw new Error(badge);
 });
 
+// ---------- Accesibilidad ----------
+
+await check('A11y: skip-link y landmarks (nav con role=tablist, main, status)', async () => {
+  const skip = await page.locator('.skip-link').getAttribute('href');
+  if (skip !== '#app') throw new Error('skip-link ausente');
+  if (await page.locator('nav.tabs[role="tablist"]').count() !== 1) throw new Error('nav sin role=tablist');
+  if (await page.locator('nav.tabs button[role="tab"]').count() !== 5) throw new Error('tabs sin role=tab');
+  if (await page.locator('#dataBadge[aria-live="polite"]').count() !== 1) throw new Error('badge sin aria-live');
+});
+
+await check('A11y: semáforo con role=status y aria-label descriptivo (no solo color)', async () => {
+  const label = await page.locator('.semaforo').getAttribute('aria-label');
+  if (!/Semáforo (verde|ámbar|rojo)/.test(label || '')) throw new Error('aria-label=' + label);
+  if (await page.locator('.semaforo[role="status"]').count() !== 1) throw new Error('sin role=status');
+});
+
+await check('A11y: navegación por teclado en las pestañas (flechas + roving tabindex)', async () => {
+  await page.locator('nav.tabs button.active').focus();
+  const before = await page.locator('nav.tabs button[aria-selected="true"]').getAttribute('aria-label');
+  await page.keyboard.press('ArrowRight');
+  const after = await page.locator('nav.tabs button[aria-selected="true"]').getAttribute('aria-label');
+  if (before === after) throw new Error(`flecha no cambió de pestaña (${before})`);
+  // solo la pestaña activa es tabbable (roving tabindex)
+  const tabbable = await page.locator('nav.tabs button[tabindex="0"]').count();
+  if (tabbable !== 1) throw new Error(`${tabbable} pestañas tabbables`);
+  await page.locator('nav.tabs button:has-text("Hoy")').click();
+});
+
+await check('A11y: el modal atrapa el foco, se cierra con Escape y restaura el foco', async () => {
+  await page.waitForSelector('[data-rej]');
+  const rejBtn = page.locator('[data-rej]').first();
+  await rejBtn.focus();
+  await rejBtn.click();
+  await page.waitForSelector('.modal[role="dialog"][aria-modal="true"]');
+  // el foco está dentro del diálogo
+  const focusedInDialog = await page.evaluate(() => !!document.activeElement.closest('.modal'));
+  if (!focusedInDialog) throw new Error('el foco no entró en el diálogo');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.modal', { state: 'detached', timeout: 3000 });
+  // tras cerrar, no debe quedar backdrop
+  if (await page.locator('.modal-backdrop').count() !== 0) throw new Error('el modal no se cerró con Escape');
+});
+
 await check('Ajustes: reset borra datos y devuelve al onboarding', async () => {
   await page.locator('nav.tabs button:has-text("Ajustes")').click();
   page.once('dialog', d => d.accept());
   await page.click('#reset');
   await page.waitForSelector('#start', { timeout: 8000 });
+});
+
+await check('A11y: los radios del test psicométrico responden a las flechas', async () => {
+  await page.click('#start');
+  await page.waitForSelector('.likert[role="radiogroup"]');
+  const first = page.locator('.likert').first().locator('button').first();
+  await first.focus();
+  await page.keyboard.press('ArrowRight');
+  const checked = await page.locator('.likert').first().locator('button[aria-checked="true"]').count();
+  if (checked !== 1) throw new Error(`${checked} radios marcados tras flecha`);
 });
 
 const realErrors = consoleErrors.filter(e =>

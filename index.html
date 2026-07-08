@@ -11,16 +11,17 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+  <a class="skip-link" href="#app">Saltar al contenido</a>
   <div class="app">
     <header class="topbar">
-      <div class="brand">Copiloto de Inversión<span class="dot">.</span></div>
-      <div class="data-badge" id="dataBadge">Cargando datos…</div>
+      <div class="brand">Copiloto de Inversión<span class="dot" aria-hidden="true">.</span></div>
+      <div class="data-badge" id="dataBadge" role="status" aria-live="polite">Cargando datos…</div>
     </header>
-    <main id="app">
+    <main id="app" tabindex="-1">
       <noscript><p>Esta aplicación necesita JavaScript.</p></noscript>
     </main>
   </div>
-  <nav class="tabs" id="tabs" style="display:none"></nav>
+  <nav class="tabs" id="tabs" style="display:none" aria-label="Navegación principal"></nav>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

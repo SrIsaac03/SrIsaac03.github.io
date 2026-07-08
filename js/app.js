@@ -142,19 +142,40 @@ let currentTab = 'hoy';
 
 function renderNav() {
   const nav = document.getElementById('tabs');
+  nav.setAttribute('role', 'tablist');
   nav.innerHTML = '';
-  for (const t of TABS) {
+  TABS.forEach((t, idx) => {
     const b = document.createElement('button');
-    b.className = t.id === currentTab ? 'active' : '';
-    b.innerHTML = `<span class="ico">${t.ico}</span>${t.label}`;
+    const active = t.id === currentTab;
+    b.className = active ? 'active' : '';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', active ? 'true' : 'false');
+    b.setAttribute('tabindex', active ? '0' : '-1'); // patrón roving tabindex
+    b.setAttribute('aria-label', t.label);
+    b.innerHTML = `<span class="ico" aria-hidden="true">${t.ico}</span>${t.label}`;
     b.onclick = () => { currentTab = t.id; render(); };
+    b.onkeydown = (e) => {
+      let ni = null;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') ni = (idx + 1) % TABS.length;
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ni = (idx - 1 + TABS.length) % TABS.length;
+      else if (e.key === 'Home') ni = 0;
+      else if (e.key === 'End') ni = TABS.length - 1;
+      if (ni != null) { e.preventDefault(); currentTab = TABS[ni].id; render(); document.querySelector('nav.tabs button.active')?.focus(); }
+    };
     nav.appendChild(b);
-  }
+  });
 }
 
 function onboarded() {
   const s = store.getState();
   return s.profile && s.finances && s.brokerId && store.listPortfolios().length > 0;
+}
+
+// Refleja el estado de selección de los botones .opt para lectores de pantalla.
+function decorateA11y() {
+  document.querySelectorAll('.opt').forEach(el => {
+    el.setAttribute('aria-pressed', el.classList.contains('selected') ? 'true' : 'false');
+  });
 }
 
 function render() {
@@ -164,6 +185,7 @@ function render() {
   renderNav();
   const views = { hoy: viewHoy, portafolios: viewPortafolios, mercado: viewMercado, historial: viewHistorial, ajustes: viewAjustes };
   views[currentTab]();
+  decorateA11y();
 }
 
 // ---------- Onboarding ----------
@@ -175,6 +197,7 @@ function renderOnboarding() {
   $app.innerHTML = '';
   $app.appendChild(h('<div class="fade-in" id="ob"></div>'));
   steps[ob.step](document.getElementById('ob'));
+  decorateA11y();
 }
 
 function obWelcome(el) {
@@ -209,26 +232,42 @@ function obTest(el) {
     </div>`));
   const qs = el.querySelector('#qs');
   QUESTIONS.forEach((q, qi) => {
+    const cur = ob.answers[q.id];
     const block = h(`
       <div style="margin:16px 0">
-        <p><strong>${qi + 1}.</strong> ${esc(q.text)}</p>
-        <div class="likert" data-q="${q.id}">
-          ${LIKERT.map((l, v) => `<button data-v="${v}" class="${ob.answers[q.id] === v ? 'selected' : ''}" title="${esc(l)}">${['--', '-', '·', '+', '++'][v]}</button>`).join('')}
+        <p id="q_${q.id}"><strong>${qi + 1}.</strong> ${esc(q.text)}</p>
+        <div class="likert" data-q="${q.id}" role="radiogroup" aria-labelledby="q_${q.id}">
+          ${LIKERT.map((l, v) => `<button type="button" role="radio" data-v="${v}" class="${cur === v ? 'selected' : ''}" aria-checked="${cur === v ? 'true' : 'false'}" tabindex="${(cur === v || (cur == null && v === 0)) ? '0' : '-1'}" aria-label="${esc(l)}"><span aria-hidden="true">${['--', '-', '·', '+', '++'][v]}</span></button>`).join('')}
         </div>
       </div>`);
     qs.appendChild(block);
   });
-  qs.querySelectorAll('.likert button').forEach(b => {
-    b.onclick = () => {
-      const qid = b.parentElement.dataset.q;
-      ob.answers[qid] = parseInt(b.dataset.v, 10);
-      renderOnboarding();
-      requestAnimationFrame(() => {
-        const idx = QUESTIONS.findIndex(q => q.id === qid);
-        const next = document.querySelectorAll('#qs > div')[Math.min(idx + 1, QUESTIONS.length - 1)];
-        next?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      });
-    };
+  const choose = (b, keepFocus = false) => {
+    const qid = b.parentElement.dataset.q;
+    ob.answers[qid] = parseInt(b.dataset.v, 10);
+    renderOnboarding();
+    requestAnimationFrame(() => {
+      if (keepFocus) {
+        document.querySelector(`.likert[data-q="${qid}"] button[aria-checked="true"]`)?.focus();
+      }
+      const idx = QUESTIONS.findIndex(q => q.id === qid);
+      const next = document.querySelectorAll('#qs > div')[Math.min(idx + 1, QUESTIONS.length - 1)];
+      if (!keepFocus) next?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
+  qs.querySelectorAll('.likert').forEach(group => {
+    const btns = [...group.querySelectorAll('button')];
+    btns.forEach((b, i) => {
+      b.onclick = () => choose(b);
+      b.onkeydown = (e) => {
+        let ni = null;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') ni = Math.min(i + 1, btns.length - 1);
+        else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ni = Math.max(i - 1, 0);
+        else if (e.key === 'Home') ni = 0;
+        else if (e.key === 'End') ni = btns.length - 1;
+        if (ni != null) { e.preventDefault(); choose(btns[ni], true); }
+      };
+    });
   });
   el.querySelector('#back').onclick = () => { ob.step = 0; renderOnboarding(); };
   el.querySelector('#next').onclick = () => {
@@ -329,6 +368,7 @@ function viewHoy() {
   const out = runEngine(pf);
   const t = out.timing;
   const semaClass = t.signal === 'green' ? 'green' : t.signal === 'amber' ? 'amber' : 'red';
+  const semaColorName = t.signal === 'green' ? 'verde' : t.signal === 'amber' ? 'ámbar' : 'rojo';
   const semaIcon = t.signal === 'green' ? '✓' : t.signal === 'amber' ? '≈' : '⏸';
   const semaTitle = t.signal === 'green' ? 'Buen momento para invertir'
     : t.signal === 'amber' ? 'Momento neutro: entrada escalonada'
@@ -351,22 +391,22 @@ function viewHoy() {
   const frag = h(`<div class="fade-in">
     ${market.timeMachine ? `<div class="banner info">🕰 Estás viendo el mercado tal y como era el <strong>${market.timeMachine}</strong>. Cada recomendación indica qué pasó en los 3 meses siguientes. <a href="./" style="color:var(--accent)">Volver a hoy</a></div>` : ''}
     ${portfolios.length > 1 ? `
-      <div class="row" style="margin-top:10px">
-        ${portfolios.map(p => `<button class="btn sm ${p.id === pf.id ? '' : 'ghost'}" data-pf="${p.id}">${esc(p.name)}</button>`).join('')}
+      <div class="row" style="margin-top:10px" role="group" aria-label="Elegir portafolio">
+        ${portfolios.map(p => `<button class="btn sm ${p.id === pf.id ? '' : 'ghost'}" data-pf="${p.id}" aria-pressed="${p.id === pf.id}">${esc(p.name)}</button>`).join('')}
       </div>` : ''}
 
-    <div class="semaforo ${semaClass}" role="status">
-      <div class="light">${semaIcon}</div>
+    <div class="semaforo ${semaClass}" role="status" aria-label="Semáforo ${semaColorName}: ${esc(semaTitle)}. ${esc(t.reasons[0] || '')}">
+      <div class="light" aria-hidden="true">${semaIcon}</div>
       <div>
         <div class="title">${semaTitle}</div>
         <div class="small ink2">${esc(t.reasons[0] || '')}</div>
       </div>
     </div>
 
-    <div class="tiles">
-      <div class="tile"><div class="k">Renta variable objetivo</div><div class="v">${out.allocation.equityPct}%</div><div class="k">de tu capital</div></div>
-      <div class="tile"><div class="k">En liquidez</div><div class="v">${out.allocation.liquidityPct}%</div><div class="k">esperando momento</div></div>
-      <div class="tile"><div class="k">Aportación mensual</div><div class="v">${out.allocation.dcaPct}%</div><div class="k">de tus ingresos</div></div>
+    <div class="tiles" role="list">
+      <div class="tile" role="listitem"><div class="k">Renta variable objetivo</div><div class="v">${out.allocation.equityPct}%</div><div class="k">de tu capital</div></div>
+      <div class="tile" role="listitem"><div class="k">En liquidez</div><div class="v">${out.allocation.liquidityPct}%</div><div class="k">esperando momento</div></div>
+      <div class="tile" role="listitem"><div class="k">Aportación mensual</div><div class="v">${out.allocation.dcaPct}%</div><div class="k">de tus ingresos</div></div>
     </div>
 
     <h2 style="margin:18px 2px 4px;font-size:18px">${waiting ? 'Candidatos en vigilancia' : `Recomendaciones para «${esc(pf.name)}»`}</h2>
@@ -389,7 +429,7 @@ function viewHoy() {
   for (const r of pending) {
     const fwd = outcomeOf(r.assetId);
     const card = h(`
-      <div class="rec">
+      <article class="rec" aria-label="${esc(r.name)}, ${waiting ? 'vigilar' : 'comprar'}, ${r.percentOfCapital}% ${waiting ? 'objetivo' : 'del capital'}">
         <div class="head">
           <div>
             <span class="name">${esc(r.name)}</span>
@@ -401,10 +441,10 @@ function viewHoy() {
         <ul>${r.rationale.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
         ${fwd != null ? `<p class="small" style="margin:0 0 12px;color:${fwd >= 0 ? 'var(--good-text)' : 'var(--critical)'}"><strong>Comprobación:</strong> 3 meses después este activo ${fwd >= 0 ? 'subió' : 'cayó'} un ${fmtPct(Math.abs(fwd))}.</p>` : ''}
         <div class="actions">
-          ${waiting ? '' : `<button class="btn sm" data-acc="${r.assetId}">✓ La ejecutaré</button>`}
-          <button class="btn ghost sm" data-rej="${r.assetId}">✕ ${waiting ? 'No me interesa' : 'Descartar'}</button>
+          ${waiting ? '' : `<button class="btn sm" data-acc="${r.assetId}" aria-label="La ejecutaré: ${esc(r.name)}"><span aria-hidden="true">✓ </span>La ejecutaré</button>`}
+          <button class="btn ghost sm" data-rej="${r.assetId}" aria-label="${waiting ? 'No me interesa' : 'Descartar'}: ${esc(r.name)}"><span aria-hidden="true">✕ </span>${waiting ? 'No me interesa' : 'Descartar'}</button>
         </div>
-      </div>`);
+      </article>`);
     recsEl.appendChild(card);
   }
 
@@ -427,55 +467,84 @@ function sameDay(a, b) {
   return da.toISOString().slice(0, 10) === db.toISOString().slice(0, 10);
 }
 
+// Modal accesible: role=dialog, aria-modal, trampa de foco, Escape para cerrar
+// y restauración del foco al elemento que lo abrió. `innerHTML` es el contenido
+// de .modal; debe incluir un <h2 id="modalTitle">. onClose se llama al cerrar.
+let modalKeydownHandler = null;
+function openModal(innerHTML, { onClose } = {}) {
+  const previouslyFocused = document.activeElement;
+  const frag = h(`
+    <div class="modal-backdrop" id="mb">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">${innerHTML}</div>
+    </div>`);
+  document.body.appendChild(frag);
+  const mb = document.getElementById('mb');
+  const dialog = mb.querySelector('.modal');
+  const focusables = () => [...dialog.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled && el.offsetParent !== null);
+
+  const close = () => {
+    document.removeEventListener('keydown', modalKeydownHandler, true);
+    modalKeydownHandler = null;
+    mb.remove();
+    if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+    onClose?.();
+  };
+
+  modalKeydownHandler = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key === 'Tab') {
+      const f = focusables();
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  };
+  document.addEventListener('keydown', modalKeydownHandler, true);
+  mb.addEventListener('click', (e) => { if (e.target === mb) close(); });
+  requestAnimationFrame(() => (focusables()[0] || dialog).focus());
+  return { mb, close };
+}
+
 function showExecutionModal(r, s) {
   const broker = getBroker(s.brokerId);
   const capital = CAPITAL_BANDS.find(b => b.id === s.finances?.capitalBandId);
-  const modal = h(`
-    <div class="modal-backdrop" id="mb">
-      <div class="modal">
-        <h2>Ejecuta la orden en tu plataforma</h2>
-        <p class="ink2" style="margin:10px 0">La app no opera por ti. Pasos:</p>
-        <ol class="ink2" style="margin:0 0 12px 18px">
-          <li>Abre <strong>${esc(broker.name)}</strong>.</li>
-          <li>Busca <strong>${esc(r.name)}</strong>.</li>
-          <li>Invierte el <strong>${r.percentOfCapital}% de tu capital</strong> (sobre ${esc(capital?.label || 'tu capital')}, calcula el importe en tu plataforma).</li>
-          ${r.terms.fractional ? '' : '<li>Este bróker no permite fracciones: redondea a títulos enteros.</li>'}
-        </ol>
-        <p class="muted small">Coste estimado: ${r.terms.feeBps / 100}% + ${r.terms.fixedFeeEUR || 0}€ fijos${r.terms.fxFeeBps ? ` + ${r.terms.fxFeeBps / 100}% cambio de divisa` : ''}.</p>
-        <div style="margin-top:14px"><button class="btn" id="ok">Entendido</button></div>
-      </div>
-    </div>`);
-  document.body.appendChild(modal);
-  document.getElementById('mb').onclick = (e) => { if (e.target.id === 'mb' || e.target.id === 'ok') { document.getElementById('mb').remove(); render(); } };
+  const { mb, close } = openModal(`
+    <h2 id="modalTitle">Ejecuta la orden en tu plataforma</h2>
+    <p class="ink2" style="margin:10px 0">La app no opera por ti. Pasos:</p>
+    <ol class="ink2" style="margin:0 0 12px 18px">
+      <li>Abre <strong>${esc(broker.name)}</strong>.</li>
+      <li>Busca <strong>${esc(r.name)}</strong>.</li>
+      <li>Invierte el <strong>${r.percentOfCapital}% de tu capital</strong> (sobre ${esc(capital?.label || 'tu capital')}, calcula el importe en tu plataforma).</li>
+      ${r.terms.fractional ? '' : '<li>Este bróker no permite fracciones: redondea a títulos enteros.</li>'}
+    </ol>
+    <p class="muted small">Coste estimado: ${r.terms.feeBps / 100}% + ${r.terms.fixedFeeEUR || 0}€ fijos${r.terms.fxFeeBps ? ` + ${r.terms.fxFeeBps / 100}% cambio de divisa` : ''}.</p>
+    <div style="margin-top:14px"><button class="btn" id="ok">Entendido</button></div>`,
+    { onClose: render });
+  mb.querySelector('#ok').onclick = close;
 }
 
 function showRejectModal(r) {
-  const modal = h(`
-    <div class="modal-backdrop" id="mb">
-      <div class="modal">
-        <h2>¿Por qué la descartas?</h2>
-        <p class="muted">Tu motivo reentrena el algoritmo: la próxima vez afinamos más.</p>
-        <div class="options" style="margin-top:12px">
-          ${REJECT_REASONS.map(x => `<button class="opt" data-r="${x.id}">${esc(x.label)}</button>`).join('')}
-        </div>
-        <textarea id="note" placeholder="Detalle opcional…" style="width:100%;font:inherit;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--plane);color:var(--ink);min-height:56px"></textarea>
-        <div class="row spread" style="margin-top:12px">
-          <button class="btn ghost sm" id="cancel">Cancelar</button>
-        </div>
-      </div>
+  const { mb, close } = openModal(`
+    <h2 id="modalTitle">¿Por qué la descartas?</h2>
+    <p class="muted">Tu motivo reentrena el algoritmo: la próxima vez afinamos más.</p>
+    <div class="options" style="margin-top:12px" role="group" aria-label="Motivo del rechazo">
+      ${REJECT_REASONS.map(x => `<button class="opt" data-r="${x.id}">${esc(x.label)}</button>`).join('')}
+    </div>
+    <label for="note" class="sr-only">Detalle opcional del motivo</label>
+    <textarea id="note" placeholder="Detalle opcional…" style="width:100%;font:inherit;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--plane);color:var(--ink);min-height:56px"></textarea>
+    <div class="row spread" style="margin-top:12px">
+      <button class="btn ghost sm" id="cancel">Cancelar</button>
     </div>`);
-  document.body.appendChild(modal);
-  const mb = document.getElementById('mb');
   mb.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
     store.recordDecision({
       assetId: r.assetId, assetClass: r.assetClass, action: 'rejected',
       reasonId: b.dataset.r, note: mb.querySelector('#note').value.trim(), snapshot: r.state,
     });
-    mb.remove();
+    close();
     render();
   });
-  mb.querySelector('#cancel').onclick = () => mb.remove();
-  mb.onclick = (e) => { if (e.target === mb) mb.remove(); };
+  mb.querySelector('#cancel').onclick = close;
 }
 
 // ---------- Vista: Portafolios ----------

@@ -50,6 +50,47 @@ body {
   font-size: 16px;
 }
 
+/* ---------- Accesibilidad ---------- */
+
+/* Foco visible y consistente solo con teclado (no al hacer clic) */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* Texto solo para lectores de pantalla */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* Enlace para saltar al contenido (visible al tabular) */
+.skip-link {
+  position: absolute; left: 8px; top: -60px; z-index: 100;
+  background: var(--accent); color: var(--accent-ink);
+  padding: 10px 16px; border-radius: 10px; font-weight: 600;
+  transition: top 0.15s;
+}
+.skip-link:focus { top: 8px; }
+
+/* Respeta la preferencia de movimiento reducido */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Contraste reforzado si el sistema lo pide */
+@media (prefers-contrast: more) {
+  :root { --border: rgba(11, 11, 11, 0.4); --muted: #55534e; }
+}
+
 .app { max-width: 860px; margin: 0 auto; padding: 0 16px 96px; }
 
 /* ---------- Cabecera y navegación ---------- */
