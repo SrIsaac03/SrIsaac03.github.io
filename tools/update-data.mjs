@@ -87,6 +87,40 @@ export function spliceSeries(bundle, key, rows, newDates, opts = {}) {
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0' };
 
+// FRED (Reserva Federal de St. Louis): serie SP500 diaria de los últimos 10 años,
+// CSV sin clave y accesible desde datacenters. Solo cubre el índice.
+export function parseFredCsv(text) {
+  const lines = text.replace(/\r/g, '').trim().split('\n');
+  if (!/date/i.test(lines[0])) throw new Error('FRED CSV inesperado: ' + lines[0]?.slice(0, 60));
+  const rows = [];
+  for (const l of lines.slice(1)) {
+    const [date, v] = l.split(',');
+    const close = parseFloat(v);
+    if (date && Number.isFinite(close)) rows.push({ date, close });
+  }
+  return rows;
+}
+
+async function fetchFredSp500() {
+  const res = await fetch('https://fred.stlouisfed.org/graph/fredgraph.csv?id=SP500', { headers: UA });
+  if (!res.ok) throw new Error(`FRED HTTP ${res.status}`);
+  return parseFredCsv(await res.text());
+}
+
+// Yahoo bloquea IPs de datacenter sin cookie: flujo cookie (fc.yahoo.com) + crumb.
+let yahooAuth = null;
+async function getYahooAuth() {
+  if (yahooAuth) return yahooAuth;
+  const r1 = await fetch('https://fc.yahoo.com/', { headers: UA, redirect: 'manual' }).catch(e => { throw new Error('cookie: ' + e.message); });
+  const cookie = (r1.headers.get('set-cookie') || '').split(';')[0];
+  if (!cookie) throw new Error('Yahoo no devolvió cookie');
+  const r2 = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, Cookie: cookie } });
+  const crumb = (await r2.text()).trim();
+  if (!r2.ok || !crumb || crumb.includes('<')) throw new Error(`crumb inválido (HTTP ${r2.status})`);
+  yahooAuth = { cookie, crumb };
+  return yahooAuth;
+}
+
 export function parseYahooChart(data) {
   const r = data?.chart?.result?.[0];
   if (!r) throw new Error('respuesta Yahoo inesperada: ' + JSON.stringify(data?.chart?.error || data).slice(0, 80));
@@ -104,9 +138,14 @@ export function parseYahooChart(data) {
 async function fetchYahoo(symbol, fromDate) {
   const p1 = Math.floor(new Date(fromDate).getTime() / 1000);
   const p2 = Math.floor(Date.now() / 1000) + 86400;
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&period1=${p1}&period2=${p2}&events=div%7Csplit`;
-  const res = await fetch(url, { headers: UA });
-  if (!res.ok) throw new Error(`Yahoo HTTP ${res.status}`);
+  const base = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&period1=${p1}&period2=${p2}`;
+  let res = await fetch(base, { headers: UA });
+  if (res.status === 401 || res.status === 403 || res.status === 429) {
+    // reintento autenticado con cookie + crumb (necesario desde datacenters)
+    const auth = await getYahooAuth();
+    res = await fetch(`${base}&crumb=${encodeURIComponent(auth.crumb)}`, { headers: { ...UA, Cookie: auth.cookie } });
+  }
+  if (!res.ok) throw new Error(`Yahoo HTTP ${res.status}: ${(await res.text()).slice(0, 80)}`);
   return parseYahooChart(await res.json());
 }
 
@@ -137,14 +176,28 @@ export async function updateBundle(bundle, fetcher = fetchSeries) {
   const lastDate = bundle.dates[bundle.dates.length - 1];
   const from = new Date(new Date(lastDate).getTime() - 20 * 86400000).toISOString().slice(0, 10);
 
-  // 1) el índice define el calendario maestro nuevo (con proxy SPY de reserva)
-  let idxRows, idxProxy = false;
+  // 1) el índice define el calendario maestro nuevo.
+  // Cadena de fuentes: fetcher (Yahoo→Stooq) → FRED → SPY como proxy.
+  let idxRows = null, idxProxy = false;
+  const idxErrors = [];
   try {
     idxRows = await fetcher('SP500', from);
-  } catch {
-    // SPY como proxy: mismo movimiento, nivel ~1/10 (el empalme lo reescala)
-    idxRows = await fetchYahoo(INDEX_PROXY.yahoo, from).catch(() => fetchStooq(INDEX_PROXY.stooq, from));
-    idxProxy = true;
+  } catch (e) { idxErrors.push('directa: ' + e.message); }
+  if (!idxRows) {
+    try {
+      idxRows = (await fetchFredSp500()).filter(r => r.date >= from);
+      if (!idxRows.length) throw new Error('sin filas en el rango');
+    } catch (e) { idxErrors.push('FRED: ' + e.message); idxRows = null; }
+  }
+  if (!idxRows) {
+    try {
+      // SPY como proxy: mismo movimiento, nivel ~1/10 (el empalme lo reescala)
+      idxRows = await fetchYahoo(INDEX_PROXY.yahoo, from).catch(() => fetchStooq(INDEX_PROXY.stooq, from));
+      idxProxy = true;
+    } catch (e) {
+      idxErrors.push('proxy SPY: ' + e.message);
+      throw new Error('Índice inaccesible en todas las fuentes → ' + idxErrors.join(' | '));
+    }
   }
   const newDates = [...bundle.dates];
   for (const r of idxRows) if (r.date > lastDate) newDates.push(r.date);

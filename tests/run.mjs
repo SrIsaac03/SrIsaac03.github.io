@@ -295,7 +295,12 @@ test('El bróker filtra: BBVA (sin ETFs ni acciones USA baratas) vs IBKR', () =>
 
 console.log('— Actualizador de datos (empalme Stooq) —');
 
-const { parseStooqCsv, parseYahooChart, spliceSeries, updateBundle } = await import('../tools/update-data.mjs');
+const { parseStooqCsv, parseYahooChart, parseFredCsv, spliceSeries, updateBundle } = await import('../tools/update-data.mjs');
+
+test('parseFredCsv extrae observaciones y descarta puntos faltantes (".")', () => {
+  const rows = parseFredCsv('observation_date,SP500\n2026-07-01,6200.5\n2026-07-02,.\n2026-07-03,6250.1\n');
+  assert(rows.length === 2 && rows[1].close === 6250.1, JSON.stringify(rows));
+});
 
 test('parseStooqCsv extrae fechas y cierres, tolera CRLF', () => {
   const rows = parseStooqCsv('Date,Open,High,Low,Close,Volume\r\n2023-01-02,10,11,9,10.5,100\r\n2023-01-03,10.5,12,10,11,90\r\n');
