@@ -15,10 +15,10 @@ Exposición: verde = 100% invertido · ámbar = 50% · rojo = 0% (liquidez).
 |---|---|---|---|---|---|
 | **Entrenamiento 1991–2010** | Semáforo | 8.8% | 11.4% | 0.80 | -17% |
 | | Comprar y mantener | 6.9% | 18.7% | 0.45 | -57% |
-| **Validación 2011–2022 (fuera de muestra)** | Semáforo | 6.8% | 11.2% | 0.64 | -15% |
-| | Comprar y mantener | 9.6% | 17.8% | 0.61 | -34% |
-| **Período completo 1991–2022** | Semáforo | 8.1% | 11.3% | 0.74 | -17% |
-| | Comprar y mantener | 7.9% | 18.4% | 0.51 | -57% |
+| **Validación 2011–2026 (fuera de muestra)** | Semáforo | 8.3% | 11.4% | 0.76 | -19% |
+| | Comprar y mantener | 12.2% | 17.2% | 0.76 | -34% |
+| **Período completo 1991–2026** | Semáforo | 8.6% | 11.4% | 0.78 | -19% |
+| | Comprar y mantener | 9.2% | 18.1% | 0.58 | -57% |
 
 ## 2. Acierto de la señal (¿qué pasó en los 3/6 meses siguientes?)
 
@@ -31,14 +31,14 @@ La base es el % incondicional (el mercado sube la mayoría de los períodos: sup
 | Entrenamiento 1991–2010 | 🟡 ámbar | 953 | 78.2% | 4.6% | 78.0% |
 | Entrenamiento 1991–2010 | 🔴 rojo | 1103 | 45.5% | -2.0% | 40.1% |
 | Entrenamiento 1991–2010 | *base (todos)* | 4979 | 66.2% | 1.9% | 70.9% |
-| Validación 2011–2022 (fuera de muestra) | 🟢 verde | 2063 | 74.4% | 2.4% | 75.0% |
-| Validación 2011–2022 (fuera de muestra) | 🟡 ámbar | 476 | 65.5% | 0.9% | 78.6% |
-| Validación 2011–2022 (fuera de muestra) | 🔴 rojo | 416 | 72.4% | 5.4% | 85.6% |
-| Validación 2011–2022 (fuera de muestra) | *base (todos)* | 2955 | 72.7% | 2.6% | 76.9% |
-| Período completo 1991–2022 | 🟢 verde | 5024 | 72.1% | 2.5% | 78.0% |
-| Período completo 1991–2022 | 🟡 ámbar | 1454 | 74.4% | 3.4% | 78.9% |
-| Período completo 1991–2022 | 🔴 rojo | 1519 | 52.9% | -0.0% | 52.7% |
-| Período completo 1991–2022 | *base (todos)* | 7997 | 68.9% | 2.2% | 73.5% |
+| Validación 2011–2026 (fuera de muestra) | 🟢 verde | 2682 | 75.5% | 2.7% | 77.7% |
+| Validación 2011–2026 (fuera de muestra) | 🟡 ámbar | 640 | 72.5% | 2.6% | 83.3% |
+| Validación 2011–2026 (fuera de muestra) | 🔴 rojo | 514 | 75.3% | 5.7% | 83.9% |
+| Validación 2011–2026 (fuera de muestra) | *base (todos)* | 3836 | 75.0% | 3.1% | 79.4% |
+| Período completo 1991–2026 | 🟢 verde | 5643 | 72.9% | 2.6% | 78.9% |
+| Período completo 1991–2026 | 🟡 ámbar | 1618 | 76.3% | 3.9% | 80.7% |
+| Período completo 1991–2026 | 🔴 rojo | 1617 | 55.0% | 0.4% | 55.5% |
+| Período completo 1991–2026 | *base (todos)* | 8878 | 70.2% | 2.4% | 74.9% |
 
 **Lectura:** el valor del semáforo no está en "predecir" el mercado sino en (a) que los días verdes
 suben con más frecuencia y más cuantía que la base, y (b) que estar fuera en los rojos recorta las
@@ -51,8 +51,8 @@ Aportación mensual constante. "Con timing": verde invierte todo lo acumulado, �
 | Período | Valor final DCA fija | Valor final DCA con timing | Ratio |
 |---|---|---|---|
 | Entrenamiento 1991–2010 | 382.8× | 390.1× | 1.019 |
-| Validación 2011–2022 (fuera de muestra) | 251.3× | 249.1× | 0.991 |
-| Período completo 1991–2022 | 1399.5× | 1420.0× | 1.015 |
+| Validación 2011–2026 (fuera de muestra) | 557.3× | 551.1× | 0.989 |
+| Período completo 1991–2026 | 2834.9× | 2873.7× | 1.014 |
 
 ## 4. Selección de activos (momentum/volatilidad, top-5 mensual vs. equiponderado)
 

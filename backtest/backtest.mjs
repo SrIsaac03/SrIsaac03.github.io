@@ -29,7 +29,8 @@ function block(name, [from, to]) {
   return { name, strat, bh, t63, t126, dca };
 }
 
-const blocks = [block('Entrenamiento 1991–2010', TRAIN), block('Validación 2011–2022 (fuera de muestra)', VALID), block('Período completo 1991–2022', FULL)];
+const endYear = dates[dates.length - 1].slice(0, 4);
+const blocks = [block('Entrenamiento 1991–2010', TRAIN), block(`Validación 2011–${endYear} (fuera de muestra)`, VALID), block(`Período completo 1991–${endYear}`, FULL)];
 const sel = evalSelection(bundle, DEFAULT_PARAMS, idxOf('1992-01-01'), dates.length);
 const selValid = evalSelection(bundle, DEFAULT_PARAMS, idxOf('2011-01-01'), dates.length);
 

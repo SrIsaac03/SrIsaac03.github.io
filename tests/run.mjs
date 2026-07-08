@@ -362,18 +362,19 @@ test('updateBundle extiende el calendario con el índice y tolera fallos por ser
   const bundle = JSON.parse(readFileSync(join(root, 'data/history.json'), 'utf8'));
   const lastDate = bundle.dates[bundle.dates.length - 1];
   const spLast = bundle.series.SP500[bundle.series.SP500.length - 1];
+  const dPlus = (n) => new Date(new Date(lastDate).getTime() + n * 86400000).toISOString().slice(0, 10);
   const fakeFetcher = async (key) => {
     if (key === 'SP500') return [
       { date: lastDate, close: spLast },
-      { date: '2023-01-03', close: spLast * 1.01 },
-      { date: '2023-01-04', close: spLast * 1.02 },
+      { date: dPlus(1), close: spLast * 1.01 },
+      { date: dPlus(2), close: spLast * 1.02 },
     ];
     throw new Error('simulated outage');
   };
   const { added, failures } = await updateBundle(bundle, fakeFetcher);
   assert(added === 2, `added=${added}`);
   assert(failures.length === 25, `failures=${failures.length}`);
-  assert(bundle.meta.end === '2023-01-04', bundle.meta.end);
+  assert(bundle.meta.end === dPlus(2), bundle.meta.end);
   assert(bundle.dates.length === bundle.series.SP500.length, 'calendario y serie desalineados');
   assert(bundle.series.AAPL.length === bundle.dates.length, 'series con fallo no rellenadas con null');
   assert(bundle.series.AAPL[bundle.dates.length - 1] === null);
