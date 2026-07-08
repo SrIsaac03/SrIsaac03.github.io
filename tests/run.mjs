@@ -293,6 +293,59 @@ test('El bróker filtra: BBVA (sin ETFs ni acciones USA baratas) vs IBKR', () =>
   for (const r of bbva.recommendations) assert(r.assetClass !== 'etf', 'BBVA no ofrece ETFs en el catálogo MVP');
 });
 
+console.log('— Actualizador de datos (empalme Stooq) —');
+
+const { parseStooqCsv, spliceSeries, updateBundle } = await import('../tools/update-data.mjs');
+
+test('parseStooqCsv extrae fechas y cierres, tolera CRLF', () => {
+  const rows = parseStooqCsv('Date,Open,High,Low,Close,Volume\r\n2023-01-02,10,11,9,10.5,100\r\n2023-01-03,10.5,12,10,11,90\r\n');
+  assert(rows.length === 2 && rows[1].close === 11, JSON.stringify(rows));
+});
+
+test('spliceSeries empalma con factor de escala y respeta el calendario', () => {
+  const bundle = { dates: ['2022-12-27', '2022-12-28'], series: { X: [100, 102] } };
+  // Stooq da niveles un 2% más bajos (sin dividendos): factor = 102/100 = 1.02
+  const rows = [
+    { date: '2022-12-28', close: 100 },
+    { date: '2022-12-29', close: 101 },
+    { date: '2022-12-30', close: 99 },
+  ];
+  const newDates = [...bundle.dates, '2022-12-29', '2022-12-30'];
+  const added = spliceSeries(bundle, 'X', rows, newDates);
+  assert(added === 2, `added=${added}`);
+  approx(bundle.series.X[2], 103.02, 1e-9);
+  approx(bundle.series.X[3], 100.98, 1e-9);
+});
+
+test('spliceSeries rechaza desviaciones de empalme sospechosas (>25%)', () => {
+  const bundle = { dates: ['2022-12-28'], series: { X: [100] } };
+  const rows = [{ date: '2022-12-28', close: 60 }, { date: '2022-12-29', close: 61 }];
+  let threw = false;
+  try { spliceSeries(bundle, 'X', rows, ['2022-12-28', '2022-12-29']); } catch { threw = true; }
+  assert(threw, 'debería rechazar factor 1.67');
+});
+
+test('updateBundle extiende el calendario con el índice y tolera fallos por serie', async () => {
+  const bundle = JSON.parse(readFileSync(join(root, 'data/history.json'), 'utf8'));
+  const lastDate = bundle.dates[bundle.dates.length - 1];
+  const spLast = bundle.series.SP500[bundle.series.SP500.length - 1];
+  const fakeFetcher = async (sym) => {
+    if (sym === '^spx') return [
+      { date: lastDate, close: spLast },
+      { date: '2023-01-03', close: spLast * 1.01 },
+      { date: '2023-01-04', close: spLast * 1.02 },
+    ];
+    throw new Error('simulated outage');
+  };
+  const { added, failures } = await updateBundle(bundle, fakeFetcher);
+  assert(added === 2, `added=${added}`);
+  assert(failures.length === 25, `failures=${failures.length}`);
+  assert(bundle.meta.end === '2023-01-04', bundle.meta.end);
+  assert(bundle.dates.length === bundle.series.SP500.length, 'calendario y serie desalineados');
+  assert(bundle.series.AAPL.length === bundle.dates.length, 'series con fallo no rellenadas con null');
+  assert(bundle.series.AAPL[bundle.dates.length - 1] === null);
+});
+
 function mkLocalStorage() {
   const m = new Map();
   return {

@@ -1,0 +1,42 @@
+name: Actualizar datos de mercado
+
+on:
+  schedule:
+    # 03:20 UTC de martes a sábado (tras el cierre de Wall Street del día anterior)
+    - cron: '20 3 * * 2-6'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Descargar y empalmar datos frescos (Stooq)
+        run: node tools/update-data.mjs
+
+      - name: Validar (suite de tests sobre los datos nuevos)
+        run: node tests/run.mjs
+
+      - name: Commit y push si hay cambios
+        run: |
+          if git diff --quiet data/history.json; then
+            echo "Sin cambios."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/history.json
+          git commit -m "chore: actualizar datos de mercado a $(date -u +%F)"
+          git push
