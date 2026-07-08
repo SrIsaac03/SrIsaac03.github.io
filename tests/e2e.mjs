@@ -216,6 +216,24 @@ await check('A11y: los radios del test psicométrico responden a las flechas', a
   if (checked !== 1) throw new Error(`${checked} radios marcados tras flecha`);
 });
 
+await check('PWA: el service worker se registra y cachea el shell offline', async () => {
+  const active = await page.evaluate(async () => {
+    const r = await Promise.race([
+      navigator.serviceWorker.ready.then(reg => !!reg.active),
+      new Promise(res => setTimeout(() => res(false), 5000)),
+    ]);
+    return r;
+  });
+  if (!active) throw new Error('service worker no activo');
+  const cachedCount = await page.evaluate(async () => {
+    const keys = await caches.keys();
+    if (!keys.length) return 0;
+    const c = await caches.open(keys.find(k => k.startsWith('copiloto')) || keys[0]);
+    return (await c.keys()).length;
+  });
+  if (cachedCount < 3) throw new Error('shell no cacheado (' + cachedCount + ' recursos)');
+});
+
 const realErrors = consoleErrors.filter(e =>
   !/net::ERR|Failed to fetch|CORS|ERR_TUNNEL|403|api\.binance|coingecko|frankfurter|corsproxy/i.test(e));
 await check('Sin errores de consola inesperados', async () => {

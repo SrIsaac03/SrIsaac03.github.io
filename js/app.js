@@ -365,8 +365,21 @@ function viewHoy() {
     return;
   }
 
-  const out = runEngine(pf);
+  let out;
+  try {
+    out = runEngine(pf);
+  } catch (e) {
+    console.error('Fallo del motor:', e);
+    $app.innerHTML = `<div class="card"><h2>No se pudo generar el análisis</h2>
+      <p class="ink2">Ha ocurrido un problema procesando los datos de mercado. Puedes reintentar o revisar tus ajustes.</p>
+      <button class="btn sm" onclick="location.reload()" style="margin-top:10px">Reintentar</button></div>`;
+    return;
+  }
   const t = out.timing;
+  if (!t) {
+    $app.innerHTML = '<div class="card"><h2>Datos insuficientes</h2><p class="ink2">No hay suficiente histórico para analizar el mercado en esta fecha.</p></div>';
+    return;
+  }
   const semaClass = t.signal === 'green' ? 'green' : t.signal === 'amber' ? 'amber' : 'red';
   const semaColorName = t.signal === 'green' ? 'verde' : t.signal === 'amber' ? 'ámbar' : 'rojo';
   const semaIcon = t.signal === 'green' ? '✓' : t.signal === 'amber' ? '≈' : '⏸';
@@ -763,7 +776,8 @@ function viewAjustes() {
     const nav = document.getElementById('tabs'); nav.style.display = 'none';
     renderTestOnly();
   };
-  $app.querySelectorAll('#brk .opt').forEach(b => b.onclick = () => { store.saveBroker(b.dataset.id); market.analyzers.clear(); render(); });
+  // el bróker no afecta al análisis técnico: no invalidamos la caché de analizadores
+  $app.querySelectorAll('#brk .opt').forEach(b => b.onclick = () => { store.saveBroker(b.dataset.id); render(); });
   $app.querySelectorAll('#cap .opt').forEach(b => b.onclick = () => { store.saveFinances({ ...s.finances, capitalBandId: b.dataset.id }); render(); });
   $app.querySelectorAll('#inc .opt').forEach(b => b.onclick = () => { store.saveFinances({ ...s.finances, incomeBandId: b.dataset.id }); render(); });
   document.getElementById('reset').onclick = () => {
@@ -796,3 +810,12 @@ initMarketData().then(() => { if (onboarded()) render(); updateBadge(); })
   .catch(e => {
     $app.innerHTML = `<div class="card"><h2>Error cargando datos</h2><p class="ink2">${esc(e.message)}</p></div>`;
   });
+
+// PWA: registra el service worker para carga instantánea y uso offline.
+// Se registra tras la carga para no competir con el arranque. Silencioso si falla
+// (p. ej. en contextos sin service workers): la app funciona igual sin él.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* sin PWA, sin drama */ });
+  });
+}
