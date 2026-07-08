@@ -307,6 +307,80 @@ test('Una serie con cola de nulls se evalúa en su último dato real (no desapar
   approx(r[0].score, r[1].score, 1e-9, 'misma serie → misma puntuación');
 });
 
+console.log('— Fiabilidad estadística (backtest/lib) —');
+
+const { simStrategy, simBuyHold, permutationTest, deflatedSharpe, normCdf, rng, walkForward, makeIndicatorCache, computeTimingSeries, gridSearch } = await import('../backtest/lib.mjs');
+
+test('normCdf: valores conocidos', () => {
+  approx(normCdf(0), 0.5, 1e-6);
+  approx(normCdf(1.96), 0.975, 2e-3);
+  approx(normCdf(-1.96), 0.025, 2e-3);
+  assert(normCdf(6) > 0.999999);
+});
+
+test('rng determinista y en [0,1)', () => {
+  const a = rng(42), b = rng(42);
+  for (let i = 0; i < 100; i++) { const v = a(); assert(v >= 0 && v < 1); approx(v, b(), 1e-12); }
+});
+
+test('simStrategy: los costes reducen el capital final y la liquidez remunerada lo sube', () => {
+  // serie con tramos alcistas y bajistas para que el semáforo cambie de exposición
+  const vals = [];
+  for (let i = 0; i < 900; i++) vals.push(100 * Math.exp(0.0004 * i + 0.15 * Math.sin(i / 40)));
+  const cache = makeIndicatorCache(vals);
+  const sig = computeTimingSeries(cache, DEFAULT_PARAMS);
+  const free = simStrategy(vals, sig, 260, vals.length, { costBps: 0, cashYield: 0 });
+  const costly = simStrategy(vals, sig, 260, vals.length, { costBps: 50, cashYield: 0 });
+  const remun = simStrategy(vals, sig, 260, vals.length, { costBps: 0, cashYield: 0.04 });
+  assert(costly.finalMultiple <= free.finalMultiple, 'coste no reduce capital');
+  assert(free.trades > 0, 'no hubo operaciones para cobrar coste');
+  if (free.avgExposure < 0.99) assert(remun.finalMultiple >= free.finalMultiple, 'liquidez remunerada no mejora');
+});
+
+test('permutationTest: señal informativa → p pequeño; señal aleatoria → p no pequeño', () => {
+  // regímenes APERIÓDICOS (cambian con baja probabilidad): la señal refleja el
+  // régimen actual y predice de verdad el tramo siguiente. Al ser aperiódicos,
+  // los desplazamientos circulares desalinean señal↔futuro → p pequeño.
+  const n = 4000, vals = [100], sig = [null];
+  const rand = rng(3);
+  let up = true;
+  for (let i = 1; i < n; i++) {
+    if (rand() < 1 / 150) up = !up;           // cambio de régimen ocasional
+    vals.push(vals[i - 1] * (1 + (up ? 0.0015 : -0.0015)));
+    sig.push(up ? 'green' : 'red');
+  }
+  const informative = permutationTest(vals, sig, 63, 0, n, { iters: 1500, seed: 1 });
+  assert(informative.pValue < 0.05, `p informativa=${informative.pValue}`);
+  assert(informative.observed > 0.05, `diff observada=${informative.observed}`);
+  // señal aleatoria sobre los mismos precios: no debe ser significativa
+  const rsig = sig.map((_, i) => i < 1 ? null : (rand() < 0.5 ? 'green' : 'red'));
+  const noise = permutationTest(vals, rsig, 63, 0, n, { iters: 1500, seed: 2 });
+  assert(noise.pValue > 0.1, `ruido demasiado significativo: ${noise.pValue}`);
+});
+
+test('deflatedSharpe: umbral crece con nº de pruebas y DSR alto para señal fuerte', () => {
+  const rand = rng(9);
+  // retornos con Sharpe positivo claro
+  const rets = Array.from({ length: 2000 }, () => 0.0006 + (rand() - 0.5) * 0.01);
+  const few = deflatedSharpe(rets, 2, []);
+  const many = deflatedSharpe(rets, 1000, []);
+  assert(many.thresholdAnnual > few.thresholdAnnual, 'umbral no crece con nº de pruebas');
+  assert(few.dsr > 0.9, `DSR bajo para señal fuerte: ${few.dsr}`);
+  assert(deflatedSharpe([0.001], 10, []) === null, 'muestra corta no devuelve null');
+});
+
+test('walkForward: las señales OOS solo existen tras la primera ventana de entrenamiento', () => {
+  const vals = [];
+  for (let i = 0; i < 3000; i++) vals.push(100 * Math.exp(0.0003 * i + 0.2 * Math.sin(i / 80)));
+  const cache = makeIndicatorCache(vals);
+  const grid = { smaLong: [150, 200], smaShort: [50], rsiOverbought: [70, 80], rsiOversold: [30], volHigh: [0.25], volExtreme: [0.45], ddDeep: [-0.25] };
+  const wf = walkForward(cache, grid, { rsiPeriod: 14, volWindow: 30, topN: 5, fwdHorizon: 63 }, { trainDays: 252 * 4, testDays: 252, start: 260 });
+  assert(wf.windows >= 2, `pocas ventanas: ${wf.windows}`);
+  for (let i = 0; i < wf.from; i++) assert(wf.oosSignals[i] === null, `señal OOS antes del primer test en i=${i}`);
+  assert(wf.oosSignals.slice(wf.from, wf.to).some(s => s != null), 'sin señales OOS en el tramo de test');
+  assert(wf.strat.years > 1, 'tramo OOS demasiado corto');
+});
+
 console.log('— Actualizador de datos (empalme Stooq) —');
 
 const { parseStooqCsv, parseYahooChart, parseFredCsv, spliceSeries, updateBundle } = await import('../tools/update-data.mjs');

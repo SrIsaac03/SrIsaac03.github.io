@@ -54,3 +54,21 @@ Período 1991–2022, señal aplicada al día siguiente, liquidez al 0%:
 Los días con señal verde subieron a 3 meses vista el 72% de las veces (base incondicional: 69%);
 los días rojos, solo el 53%. Detalles y limitaciones en `backtest/REPORT.md`.
 **Rentabilidades pasadas no garantizan rentabilidades futuras.**
+
+## Fiabilidad de la predicción (análisis honesto)
+
+`backtest/RELIABILITY.md` somete la señal a cinco pruebas exigentes. Conclusión honesta:
+**es una herramienta de gestión de riesgo, no un oráculo de predicción.**
+
+- **Significancia (permutación):** la diferencia verde-vs-rojo a 3 meses (+2,2%) NO alcanza
+  significancia estándar (p≈0,15): el mercado es tan tendencial que no puede descartarse el azar
+  a nivel de señal direccional diaria. Lo decimos claramente en vez de ocultarlo.
+- **Multiple-testing (Sharpe deflactado):** el Sharpe **sí** supera el sesgo de haber probado 486
+  configuraciones (DSR≈100%), porque procede sobre todo de reducir la volatilidad, no de adivinar.
+- **Walk-forward (100% fuera de muestra):** reoptimizando cada año con solo los 8 años previos, el
+  Sharpe se mantiene en 0,63 (vs 0,44 de comprar-y-mantener) y la **caída máxima en -19% vs -57%**.
+- **Costes:** ~18 operaciones/año; el Sharpe apenas cambia con costes de 5-25 pb.
+- **Across-assets:** el semáforo **reduce la caída máxima en los 25/25 activos** probados (protección
+  universal), aunque solo mejora el Sharpe en 11/25 (en activos muy alcistas, estar fuera cuesta).
+
+Reproducible con `node backtest/reliability.mjs`.
