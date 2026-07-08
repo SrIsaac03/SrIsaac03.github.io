@@ -147,6 +147,10 @@ await check('Mercado: gráfico con bandas de señal, leyenda, tooltip y presets'
   await page.waitForSelector('.chart-wrap .tooltip:visible', { timeout: 2000 });
   await page.waitForSelector('a[href="?fecha=2008-09-15"]');
   await page.waitForSelector('a[href="backtest/RELIABILITY.md"]');
+  // panel de protección demostrada en vivo
+  await page.waitForSelector('text=Protección demostrada');
+  const protText = await page.locator('.card:has-text("Protección demostrada")').innerText();
+  if (!/-\d+\s*%/.test(protText)) throw new Error('sin cifras de caída en el panel de protección');
 });
 
 await check('Volver a hoy: degradación limpia sin APIs en vivo', async () => {

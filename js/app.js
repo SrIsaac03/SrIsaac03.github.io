@@ -115,6 +115,40 @@ function runEngine(portfolio) {
   });
 }
 
+// Demostración de protección en vivo: sobre TODO el histórico disponible, compara
+// la peor caída del semáforo (exposición 100/50/0% según señal confirmada, aplicada
+// al día siguiente, liquidez al 0%) frente a comprar-y-mantener. Se cachea.
+let _protectionStats = null;
+function computeProtectionStats() {
+  if (_protectionStats) return _protectionStats;
+  const sp = market.sp500, N = market.lastIndex + 1;
+  const k = DEFAULT_PARAMS.signalPersistence || 1;
+  // señal confirmada en todo el histórico (FSM en una pasada)
+  const conf = new Array(N).fill(null);
+  let cur = null, cand = null, run = 0;
+  for (let i = 0; i < N; i++) {
+    const st = market.indexAnalyzer.stateAt(i);
+    const raw = st ? timingSignal(st, DEFAULT_PARAMS, 0)?.signal : null;
+    if (raw == null) { conf[i] = cur; continue; }
+    if (cur == null) { cur = raw; cand = raw; run = 0; }
+    else { if (raw === cand) run++; else { cand = raw; run = 1; } if (cand !== cur && run >= k) cur = cand; }
+    conf[i] = cur;
+  }
+  const expOf = { green: 1, amber: 0.5, red: 0 };
+  const start = market.dates.findIndex(d => d >= '1991-01-01');
+  let sEq = 1, sPeak = 1, sDD = 0, bEq = 1, bPeak = 1, bDD = 0, exposure = 0;
+  for (let i = Math.max(start, 1); i < N; i++) {
+    if (sp[i] == null || sp[i - 1] == null) continue;
+    const r = sp[i] / sp[i - 1] - 1;
+    sEq *= 1 + exposure * r; sPeak = Math.max(sPeak, sEq); sDD = Math.min(sDD, sEq / sPeak - 1);
+    bEq *= 1 + r; bPeak = Math.max(bPeak, bEq); bDD = Math.min(bDD, bEq / bPeak - 1);
+    if (conf[i] != null) exposure = expOf[conf[i]];
+  }
+  const years = (N - start) / 252;
+  _protectionStats = { years, stratMaxDD: sDD, bhMaxDD: bDD, stratMult: sEq, bhMult: bEq };
+  return _protectionStats;
+}
+
 // ---------- Utilidades de render ----------
 
 function h(html) {
@@ -650,6 +684,7 @@ function viewPortafolios() {
 function viewMercado() {
   if (!market.ready) { $app.innerHTML = '<div class="card"><p class="muted">Cargando…</p></div>'; return; }
   const st = market.indexAnalyzer.stateAt(market.lastIndex);
+  const prot = computeProtectionStats();
   const twoYears = 504;
   const from = Math.max(0, market.lastIndex - twoYears);
   const frag = h(`<div class="fade-in">
@@ -675,6 +710,17 @@ function viewMercado() {
         <a class="btn ghost sm" href="?fecha=2021-06-01" style="text-decoration:none">Alcista 2021</a>
         ${market.timeMachine ? '<a class="btn sm" href="./" style="text-decoration:none">Volver a hoy</a>' : ''}
       </div>
+    </div>
+    <div class="card">
+      <h2>Protección demostrada sobre el histórico real</h2>
+      <div class="tiles" role="list" style="margin:10px 0 4px">
+        <div class="tile" role="listitem"><div class="k">Peor caída — semáforo</div><div class="v up">${fmtPct(prot.stratMaxDD, 0)}</div></div>
+        <div class="tile" role="listitem"><div class="k">Peor caída — mercado</div><div class="v down">${fmtPct(prot.bhMaxDD, 0)}</div></div>
+        <div class="tile" role="listitem"><div class="k">Capital ×${' '}(${Math.round(prot.years)} años)</div><div class="v">${prot.stratMult.toFixed(1)}× / ${prot.bhMult.toFixed(1)}×</div></div>
+      </div>
+      <p class="small muted">Simulación sobre el S&P 500 (${Math.round(prot.years)} años): exposición 100/50/0% según el semáforo,
+      aplicada al día siguiente, liquidez sin remunerar. La peor caída es mucho menor; el capital final es comparable.
+      No es una promesa de resultados futuros.</p>
     </div>
     <div class="card">
       <h2>¿Cómo de fiable es el semáforo?</h2>
