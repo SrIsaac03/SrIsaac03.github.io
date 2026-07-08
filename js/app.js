@@ -372,7 +372,8 @@ function viewHoy() {
     console.error('Fallo del motor:', e);
     $app.innerHTML = `<div class="card"><h2>No se pudo generar el análisis</h2>
       <p class="ink2">Ha ocurrido un problema procesando los datos de mercado. Puedes reintentar o revisar tus ajustes.</p>
-      <button class="btn sm" onclick="location.reload()" style="margin-top:10px">Reintentar</button></div>`;
+      <button class="btn sm" id="retry" style="margin-top:10px">Reintentar</button></div>`;
+    document.getElementById('retry').onclick = () => location.reload();
     return;
   }
   const t = out.timing;

@@ -5,6 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Copiloto de Inversión: te dice qué porcentaje invertir, cuándo hacerlo y qué activos puedes contratar en tu propio bróker. No-custodial y educativo.">
   <meta name="theme-color" content="#2a78d6">
+  <!-- Defensa en profundidad: la app solo puede conectar con estos orígenes de datos
+       de mercado (limita la exfiltración ante un hipotético XSS). Sin scripts inline. -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'self';
+    style-src 'self' 'unsafe-inline';
+    img-src 'self' data:;
+    font-src 'self';
+    connect-src 'self' https://api.binance.com https://api.coingecko.com https://api.frankfurter.app https://query1.finance.yahoo.com https://corsproxy.io;
+    manifest-src 'self';
+    worker-src 'self';
+    object-src 'none';
+    base-uri 'self';
+    form-action 'none'">
+  <meta name="referrer" content="no-referrer">
   <title>Copiloto de Inversión</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>">
   <link rel="manifest" href="manifest.webmanifest">
