@@ -2,7 +2,7 @@
 
 Este documento responde a una sola pregunta: **¿la señal del semáforo aporta
 información real, o es fruto del azar y del sobreajuste?** Para responder con
-honestidad aplicamos cinco pruebas exigentes sobre el S&P 500 (1991-01-02 → 2026-07-16).
+honestidad aplicamos cinco pruebas exigentes sobre el S&P 500 (1991-01-02 → 2026-07-17).
 
 > Metodología: la señal del cierre del día *t* se aplica en *t+1* (sin sesgo de
 > anticipación). Todas las cifras son reproducibles: `node backtest/reliability.mjs`.
@@ -17,7 +17,7 @@ autocorrelación de ambas series).
 | Horizonte | Verde − Rojo (observado) | Media bajo azar | p-valor |
 |---|---|---|---|
 | 3 meses (63 sesiones) | 2.1% | -0.0% | **0.1496** |
-| 1 mes (21 sesiones) | 0.6% | -0.0% | **0.1816** |
+| 1 mes (21 sesiones) | 0.6% | -0.0% | **0.1819** |
 
 **Lectura:** un p-valor < 0,05 indica que la diferencia verde-rojo es muy
 improbable por azar. ⚠️ La señal a 3 meses no alcanza significancia estándar.
@@ -49,7 +49,7 @@ visto. Se encadenan 28 ventanas sin solape de información.
 | **Semáforo walk-forward (OOS)** | 6.8% | 11.4% | 0.63 | -19% |
 | Comprar y mantener (mismo tramo) | 6.9% | 19.2% | 0.44 | -57% |
 
-Tramo evaluado: 1998-12-22 → 2026-07-16.
+Tramo evaluado: 1998-12-22 → 2026-07-17.
 **Lectura:** si el Sharpe walk-forward sigue siendo bueno, la estrategia no depende
 de haber elegido parámetros "a toro pasado". ✅ Bate a comprar-y-mantener en Sharpe fuera de muestra.
 
@@ -60,10 +60,10 @@ comen la ventaja, y que remunerar la liquidez (letras al 2-4%) la mejora.
 
 | Coste/operación | Liquidez 0% | Liquidez 2% | Liquidez 4% |
 |---|---|---|---|
-| 0 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.84 |
-| 5 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.84 |
-| 10 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.84 |
-| 25 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.84 |
+| 0 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.83 |
+| 5 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.83 |
+| 10 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.83 |
+| 25 pb | Sharpe 0.74 | Sharpe 0.79 | Sharpe 0.83 |
 
 Operaciones totales en 36 años: **270** (≈7.6/año).
 **Lectura:** con costes realistas (5-10 pb) el Sharpe apenas se mueve; remunerar la
