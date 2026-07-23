@@ -31,14 +31,14 @@ La base es el % incondicional (el mercado sube la mayoría de los períodos: sup
 | Entrenamiento 1991–2010 | 🟡 ámbar | 899 | 77.6% | 4.6% | 76.7% |
 | Entrenamiento 1991–2010 | 🔴 rojo | 1118 | 46.8% | -1.8% | 41.4% |
 | Entrenamiento 1991–2010 | *base (todos)* | 4979 | 66.2% | 1.9% | 70.9% |
-| Validación 2011–2026 (fuera de muestra) | 🟢 verde | 2714 | 75.5% | 2.7% | 77.4% |
-| Validación 2011–2026 (fuera de muestra) | 🟡 ámbar | 605 | 72.6% | 2.7% | 85.1% |
+| Validación 2011–2026 (fuera de muestra) | 🟢 verde | 2714 | 75.5% | 2.7% | 77.5% |
+| Validación 2011–2026 (fuera de muestra) | 🟡 ámbar | 606 | 72.6% | 2.7% | 85.1% |
 | Validación 2011–2026 (fuera de muestra) | 🔴 rojo | 527 | 75.5% | 5.6% | 83.5% |
-| Validación 2011–2026 (fuera de muestra) | *base (todos)* | 3846 | 75.0% | 3.1% | 79.5% |
+| Validación 2011–2026 (fuera de muestra) | *base (todos)* | 3847 | 75.0% | 3.1% | 79.5% |
 | Período completo 1991–2026 | 🟢 verde | 5711 | 72.8% | 2.6% | 78.8% |
-| Período completo 1991–2026 | 🟡 ámbar | 1532 | 76.0% | 3.9% | 80.7% |
+| Período completo 1991–2026 | 🟡 ámbar | 1533 | 76.1% | 3.9% | 80.7% |
 | Período completo 1991–2026 | 🔴 rojo | 1645 | 56.0% | 0.5% | 56.4% |
-| Período completo 1991–2026 | *base (todos)* | 8888 | 70.3% | 2.5% | 75.0% |
+| Período completo 1991–2026 | *base (todos)* | 8889 | 70.3% | 2.5% | 75.0% |
 
 **Lectura:** el valor del semáforo no está en "predecir" el mercado sino en (a) que los días verdes
 suben con más frecuencia y más cuantía que la base, y (b) que estar fuera en los rojos recorta las
@@ -51,8 +51,8 @@ Aportación mensual constante. "Con timing": verde invierte todo lo acumulado, �
 | Período | Valor final DCA fija | Valor final DCA con timing | Ratio |
 |---|---|---|---|
 | Entrenamiento 1991–2010 | 382.8× | 389.9× | 1.019 |
-| Validación 2011–2026 (fuera de muestra) | 558.7× | 552.4× | 0.989 |
-| Período completo 1991–2026 | 2837.9× | 2874.4× | 1.013 |
+| Validación 2011–2026 (fuera de muestra) | 558.0× | 551.6× | 0.989 |
+| Período completo 1991–2026 | 2834.0× | 2870.5× | 1.013 |
 
 ## 4. Selección de activos (momentum/volatilidad, top-5 mensual vs. equiponderado)
 
