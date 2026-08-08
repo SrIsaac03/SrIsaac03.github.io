@@ -2,7 +2,7 @@
 
 Este documento responde a una sola pregunta: **¿la señal del semáforo aporta
 información real, o es fruto del azar y del sobreajuste?** Para responder con
-honestidad aplicamos cinco pruebas exigentes sobre el S&P 500 (1991-01-02 → 2026-08-06).
+honestidad aplicamos cinco pruebas exigentes sobre el S&P 500 (1991-01-02 → 2026-08-07).
 
 > Metodología: la señal del cierre del día *t* se aplica en *t+1* (sin sesgo de
 > anticipación). Todas las cifras son reproducibles: `node backtest/reliability.mjs`.
@@ -17,7 +17,7 @@ autocorrelación de ambas series).
 | Horizonte | Verde − Rojo (observado) | Media bajo azar | p-valor |
 |---|---|---|---|
 | 3 meses (63 sesiones) | 2.1% | -0.0% | **0.1493** |
-| 1 mes (21 sesiones) | 0.6% | -0.0% | **0.1809** |
+| 1 mes (21 sesiones) | 0.6% | -0.0% | **0.1829** |
 
 **Lectura:** un p-valor < 0,05 indica que la diferencia verde-rojo es muy
 improbable por azar. ⚠️ La señal a 3 meses no alcanza significancia estándar.
@@ -49,7 +49,7 @@ visto. Se encadenan 28 ventanas sin solape de información.
 | **Semáforo walk-forward (OOS)** | 6.9% | 11.4% | 0.64 | -19% |
 | Comprar y mantener (mismo tramo) | 7.0% | 19.2% | 0.45 | -57% |
 
-Tramo evaluado: 1998-12-22 → 2026-08-06.
+Tramo evaluado: 1998-12-22 → 2026-08-07.
 **Lectura:** si el Sharpe walk-forward sigue siendo bueno, la estrategia no depende
 de haber elegido parámetros "a toro pasado". ✅ Bate a comprar-y-mantener en Sharpe fuera de muestra.
 
