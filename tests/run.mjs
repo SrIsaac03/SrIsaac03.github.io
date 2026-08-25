@@ -9,7 +9,7 @@ import { BROKERS, getBroker, brokerTerms } from '../js/core/brokers.js';
 import { computeFeedbackAdjustments, isSuppressed, REJECT_REASONS } from '../js/core/feedback.js';
 import { ASSETS, getAsset } from '../js/core/assets.js';
 import { derivePreferences } from '../js/core/preferences.js';
-import { portfolioSnapshot, mergeLots } from '../js/core/holdings.js';
+import { portfolioSnapshot, positionSnapshot, mergeLots, normalizeHolding, valuationHistory } from '../js/core/holdings.js';
 import { reviewHolding, reviewPortfolio, healthScore } from '../js/core/review.js';
 import { generateStrategyOptions } from '../js/core/strategies.js';
 
@@ -321,9 +321,66 @@ test('Una posición sin precio se valora a coste y marca la cartera como incompl
   assert(s.positions[0].pnl === null, 'sin precio no hay plusvalía inventada');
 });
 
-test('mergeLots promedia el precio de compra ponderando por unidades', () => {
-  const m = mergeLots({ units: 10, entryPrice: 100 }, 10, 200);
-  approx(m.units, 20); approx(m.entryPrice, 150);
+test('mergeLots suma la nueva aportación al importe y a las unidades', () => {
+  const m = mergeLots({ invested: 1000, units: 10 }, 500, 4);
+  approx(m.invested, 1500); approx(m.units, 14);
+});
+
+test('Migración: una posición del modelo antiguo deriva su importe invertido', () => {
+  const old = { id: 'h1', assetId: 'AAPL', units: 10, entryPrice: 100 };
+  const n = normalizeHolding(old);
+  approx(n.invested, 1000);
+  assert(Array.isArray(n.valuations) && n.valuations.length === 0);
+  const p = positionSnapshot(old, 150);
+  approx(p.value, 1500); approx(p.pnlPct, 0.5);
+});
+
+test('Una posición sin unidades se valora por el importe que anotó el usuario', () => {
+  const now = Date.parse('2026-06-01');
+  const h = { id: 'h1', assetId: 'X', invested: 1000, units: 0, addedAt: Date.parse('2024-06-01'),
+    valuations: [{ ts: Date.parse('2026-05-30'), value: 1300 }] };
+  const p = positionSnapshot(h, null, { now });
+  approx(p.value, 1300);
+  approx(p.pnlPct, 0.3);
+  assert(p.valueSource === 'manual', p.valueSource);
+  assert(p.staleDays === 2, `${p.staleDays}`);
+  // 2 años de recorrido: 30% total ≈ 14% anual
+  assert(p.annualizedPct > 0.13 && p.annualizedPct < 0.15, `${p.annualizedPct}`);
+});
+
+test('Gana el dato más fresco: valoración manual vs precio de mercado', () => {
+  const base = { id: 'h1', assetId: 'X', invested: 1000, units: 10,
+    valuations: [{ ts: Date.parse('2026-05-01'), value: 1300 }] };
+  // precio de mercado más antiguo que la anotación → manda el usuario
+  const stale = positionSnapshot(base, 200, { priceTs: Date.parse('2022-12-30') });
+  approx(stale.value, 1300);
+  assert(stale.valueSource === 'manual');
+  // precio de mercado más reciente → manda el mercado
+  const fresh = positionSnapshot(base, 200, { priceTs: Date.parse('2026-05-20') });
+  approx(fresh.value, 2000);
+  assert(fresh.valueSource === 'mercado');
+});
+
+test('Sin valorar: la posición cuenta a coste y queda marcada como pendiente', () => {
+  const s = portfolioSnapshot([{ id: 'h1', assetId: 'X', assetClass: 'etf', invested: 500 }],
+    () => null, { capitalBase: 1000 });
+  assert(s.unvalued === 1 && s.stale, JSON.stringify({ u: s.unvalued, s: s.stale }));
+  approx(s.totalValue, 500);
+  assert(s.positions[0].pnl === null, 'sin valor no se inventa plusvalía');
+});
+
+test('valuationHistory reconstruye la evolución con lo que se fue anotando', () => {
+  const d = s => Date.parse(s);
+  const hs = [
+    { id: 'a', invested: 1000, addedAt: d('2026-01-01'), valuations: [{ ts: d('2026-02-01'), value: 1100 }, { ts: d('2026-03-01'), value: 1250 }] },
+    { id: 'b', invested: 500, addedAt: d('2026-01-01'), valuations: [{ ts: d('2026-03-01'), value: 480 }] },
+  ];
+  const hist = valuationHistory(hs);
+  assert(hist.length === 2, `${hist.length} puntos`);
+  approx(hist[0].value, 1600); // 1100 + b aún a coste (500)
+  approx(hist[1].value, 1730); // 1250 + 480
+  approx(hist[1].cost, 1500);
+  assert(hist[0].date === '2026-02-01' && hist[1].date === '2026-03-01');
 });
 
 console.log('— Revisión de cartera: cuándo vender —');
@@ -500,34 +557,71 @@ test('Las exclusiones del test se aplican a todas las opciones', () => {
 
 console.log('— Cartera en el almacén local —');
 
-test('addHolding promedia una segunda compra del mismo activo', async () => {
+test('addHolding suma una segunda aportación al mismo activo', async () => {
   const st = await import('../js/core/store.js');
   const pf = st.listPortfolios()[0];
-  st.addHolding({ portfolioId: pf.id, assetId: 'AAPL', assetClass: 'equity', currency: 'USD', units: 10, entryPrice: 100 });
-  st.addHolding({ portfolioId: pf.id, assetId: 'AAPL', assetClass: 'equity', currency: 'USD', units: 10, entryPrice: 200 });
+  st.addHolding({ portfolioId: pf.id, assetId: 'AAPL', assetClass: 'equity', currency: 'EUR', invested: 1000, units: 10 });
+  st.addHolding({ portfolioId: pf.id, assetId: 'AAPL', assetClass: 'equity', currency: 'EUR', invested: 2000, units: 10 });
   const hs = st.listHoldings(pf.id);
-  assert(hs.length === 1, `${hs.length} líneas: debería promediar en una`);
-  approx(hs[0].units, 20); approx(hs[0].entryPrice, 150);
+  assert(hs.length === 1, `${hs.length} líneas: debería sumarse en una`);
+  approx(hs[0].invested, 3000); approx(hs[0].units, 20);
 });
 
-test('addHolding rechaza unidades o precios no positivos', async () => {
+test('addHolding acepta una posición sin unidades, solo con el importe', async () => {
+  const st = await import('../js/core/store.js');
+  const pf = st.listPortfolios()[0];
+  const h = st.addHolding({ portfolioId: pf.id, assetId: 'MSFT', assetClass: 'equity', currency: 'EUR', invested: 750 });
+  approx(h.invested, 750); approx(h.units, 0);
+  st.removeHolding(h.id);
+});
+
+test('addHolding exige un importe invertido positivo', async () => {
   const st = await import('../js/core/store.js');
   const pf = st.listPortfolios()[0];
   let threw = 0;
-  try { st.addHolding({ portfolioId: pf.id, assetId: 'KO', units: 0, entryPrice: 10 }); } catch { threw++; }
-  try { st.addHolding({ portfolioId: pf.id, assetId: 'KO', units: 1, entryPrice: -5 }); } catch { threw++; }
+  try { st.addHolding({ portfolioId: pf.id, assetId: 'KO', invested: 0 }); } catch { threw++; }
+  try { st.addHolding({ portfolioId: pf.id, assetId: 'KO', invested: -5 }); } catch { threw++; }
   assert(threw === 2, `${threw} errores de 2`);
 });
 
-test('recordSale descuenta unidades, anota el historial y cierra la posición al vender todo', async () => {
+test('revalueHolding anota el valor y reanotar el mismo día corrige en vez de acumular', async () => {
   const st = await import('../js/core/store.js');
   const pf = st.listPortfolios()[0];
   const h = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
-  st.recordSale({ id: h.id, unitsSold: 5, price: 180, verdict: 'reducir' });
-  approx(st.listHoldings(pf.id).find(x => x.assetId === 'AAPL').units, 15);
+  st.revalueHolding(h.id, 3600);
+  st.revalueHolding(h.id, 3800); // mismo día: corrige
+  const cur = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
+  assert(cur.valuations.length === 1, `${cur.valuations.length} valoraciones el mismo día`);
+  approx(cur.valuations[0].value, 3800);
+  // y otra en una fecha distinta sí se acumula
+  st.revalueHolding(h.id, 3500, Date.now() - 5 * 86400000);
+  assert(st.listHoldings(pf.id).find(x => x.assetId === 'AAPL').valuations.length === 2);
+});
+
+test('revalueMany actualiza varias posiciones e ignora las vacías', async () => {
+  const st = await import('../js/core/store.js');
+  const pf = st.listPortfolios()[0];
+  const a = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
+  const b = st.addHolding({ portfolioId: pf.id, assetId: 'KO', assetClass: 'equity', currency: 'EUR', invested: 400 });
+  const n = st.revalueMany({ [a.id]: 4000, [b.id]: '', bogus: 100 });
+  assert(n === 1, `actualizadas ${n}: solo la que traía valor válido`);
+  approx(st.listHoldings(pf.id).find(x => x.assetId === 'AAPL').valuations.slice(-1)[0].value, 4000);
+  st.removeHolding(b.id);
+});
+
+test('recordSale descuenta el importe proporcionalmente y cierra al vender todo', async () => {
+  const st = await import('../js/core/store.js');
+  const pf = st.listPortfolios()[0];
+  const h = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
+  const before = positionSnapshot(h, null);
+  st.recordSale({ id: h.id, amount: before.valueOrCost / 4, verdict: 'reducir' });
+  const after = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
+  approx(after.invested, before.cost * 0.75, 1e-6);
+  approx(after.units, before.units * 0.75, 1e-6);
   const sales = st.listDecisions().filter(d => d.action === 'sold');
-  assert(sales.length === 1 && sales[0].units === 5, JSON.stringify(sales));
-  st.recordSale({ id: h.id, unitsSold: 999 });
+  assert(sales.length === 1, JSON.stringify(sales));
+  approx(sales[0].amount, before.valueOrCost / 4, 1e-6);
+  st.recordSale({ id: h.id, amount: 1e9 });
   assert(!st.listHoldings(pf.id).some(x => x.assetId === 'AAPL'), 'vender todo debe cerrar la posición');
 });
 

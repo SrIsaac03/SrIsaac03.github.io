@@ -268,11 +268,19 @@ Holding(
   id UUID PK,
   portfolio_id UUID FK -> Portfolio,
   asset_id UUID FK -> Asset,
-  units NUMERIC,                -- participaciones/acciones
-  entry_price NUMERIC,          -- precio medio de compra EN LA DIVISA DEL ACTIVO
-  currency TEXT,
+  invested NUMERIC,             -- IMPORTE aportado, en la divisa del usuario
+  units NUMERIC,                -- opcional: participaciones/acciones
+  currency TEXT,                -- divisa de los importes (por defecto EUR)
   added_at TIMESTAMPTZ,
-  UNIQUE (portfolio_id, asset_id)  -- una segunda compra promedia, no duplica línea
+  UNIQUE (portfolio_id, asset_id)  -- una segunda compra suma, no duplica línea
+)
+
+-- Revalorizaciones que el usuario va anotando periódicamente
+HoldingValuation(
+  holding_id UUID FK -> Holding,
+  ts TIMESTAMPTZ,
+  value NUMERIC,                -- cuánto vale la posición ese día
+  PRIMARY KEY (holding_id, DATE(ts))  -- una por día: reanotar corrige
 )
 
 -- Opción de cartera elegida por el usuario (una por portafolio)
@@ -439,8 +447,23 @@ Invariantes garantizados por tests para toda opción:
 
 ### Etapa 6 — Review (revisión de la cartera real y decisiones de venta)
 
-Las posiciones que el usuario ya tiene se guardan en su dispositivo (`holdings`: activo, unidades,
-precio medio, divisa). `js/core/review.js` cruza cada posición con la tendencia actual del activo y
+Las posiciones que el usuario ya tiene se guardan en su dispositivo (`holdings`: activo, **importe
+invertido**, unidades opcionales y el histórico de valoraciones).
+
+**Por qué el importe es lo primario:** el usuario sabe sin dudar cuánto dinero puso ("metí 500 €");
+las unidades y el precio medio los tiene que buscar. Las unidades quedan como dato opcional que
+habilita la valoración automática a precio de mercado.
+
+**Por qué hacen falta valoraciones manuales:** el histórico empaquetado llega hasta 2022 para la
+mayoría de activos y no cubre todo el universo. Sin un valor que el usuario refresque, la cartera
+sería ficción. Por eso puede anotar periódicamente cuánto vale cada posición —una a una o todas de
+golpe— y de ahí salen la rentabilidad real, la anualizada y la evolución del valor en el tiempo
+(`valuationHistory`). Regla de precedencia: **gana el dato más fresco**, comparando la fecha de la
+anotación manual con la del último precio de mercado disponible; la interfaz dice siempre cuál se
+está usando y de cuándo es. Si la valoración más antigua supera los 30 días, se avisa de que las
+rentabilidades y los veredictos pueden no reflejar la realidad.
+
+`js/core/review.js` cruza cada posición con la tendencia actual del activo y
 emite un veredicto explicable — **vender / reducir / mantener / reforzar** — por este orden:
 
 1. **Ruptura de tendencia** (precio bajo la SMA200 y momentum 12m negativo) → vender.
