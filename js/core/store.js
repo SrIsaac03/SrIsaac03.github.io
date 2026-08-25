@@ -82,6 +82,42 @@ export function archivePortfolio(id) {
   return p;
 }
 
+// --- Cartera real: activos que el usuario POSEE en cada portafolio ---
+// Se guardan en local (no-custodial): solo el activo y una referencia opcional.
+// No pedimos importes exactos; el peso es una banda opcional para futuras
+// recomendaciones proporcionales.
+
+export function listHoldings(portfolioId) {
+  const p = getState().portfolios.find(p => p.id === portfolioId);
+  return (p && p.holdings) || [];
+}
+
+export function addHolding(portfolioId, { assetId, weightBandId = null, note = null }) {
+  const s = getState();
+  const p = s.portfolios.find(p => p.id === portfolioId);
+  if (!p) throw new Error('Portafolio no encontrado');
+  p.holdings ||= [];
+  if (p.holdings.some(h => h.assetId === assetId)) {
+    throw new Error('Ese activo ya está en esta cartera');
+  }
+  const holding = {
+    id: 'h_' + Math.random().toString(36).slice(2, 10),
+    assetId, weightBandId, note: note || null,
+    addedAt: Date.now(),
+  };
+  p.holdings.push(holding);
+  save(s);
+  return holding;
+}
+
+export function removeHolding(portfolioId, holdingId) {
+  const s = getState();
+  const p = s.portfolios.find(p => p.id === portfolioId);
+  if (!p || !p.holdings) return;
+  p.holdings = p.holdings.filter(h => h.id !== holdingId);
+  save(s);
+}
+
 // --- Decisiones sobre recomendaciones (feedback loop, etapa 5) ---
 
 export function recordDecision({ assetId, assetClass, action, reasonId, note, snapshot }) {

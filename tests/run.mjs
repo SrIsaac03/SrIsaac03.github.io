@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { sma, ema, rsi, macd, rollingVolatility, drawdownFromHigh, momentum12m1, dailyReturns } from '../js/core/indicators.js';
-import { SeriesAnalyzer, timingSignal, confirmedTiming, allocate, eligibilityFilter, rankAssets, generateRecommendations, DEFAULT_PARAMS } from '../js/core/engine.js';
+import { SeriesAnalyzer, timingSignal, confirmedTiming, evaluateHolding, allocate, eligibilityFilter, rankAssets, generateRecommendations, DEFAULT_PARAMS } from '../js/core/engine.js';
 import { scoreTest, QUESTIONS, CATEGORIES } from '../js/core/profile.js';
 import { BROKERS, getBroker, brokerTerms } from '../js/core/brokers.js';
 import { computeFeedbackAdjustments, isSuppressed, REJECT_REASONS } from '../js/core/feedback.js';
@@ -249,6 +249,74 @@ test('Cada portafolio ocupa un slot 1|2 único', async () => {
   const { listPortfolios } = await import('../js/core/store.js');
   const slots = listPortfolios().map(p => p.slot).sort();
   assert(JSON.stringify(slots) === '[1,2]', JSON.stringify(slots));
+});
+
+console.log('— Cartera real: tenencias en el store —');
+
+test('addHolding / listHoldings / removeHolding y rechazo de duplicados', async () => {
+  const store = await import('../js/core/store.js');
+  const [pf] = store.listPortfolios();
+  assert(store.listHoldings(pf.id).length === 0);
+  const h1 = store.addHolding(pf.id, { assetId: 'AAPL', note: 'compré en 2021' });
+  store.addHolding(pf.id, { assetId: 'MSFT' });
+  assert(store.listHoldings(pf.id).length === 2);
+  let threw = false;
+  try { store.addHolding(pf.id, { assetId: 'AAPL' }); } catch { threw = true; }
+  assert(threw, 'debería rechazar activo duplicado');
+  store.removeHolding(pf.id, h1.id);
+  const rest = store.listHoldings(pf.id);
+  assert(rest.length === 1 && rest[0].assetId === 'MSFT', JSON.stringify(rest));
+});
+
+test('Las tenencias están aisladas por portafolio', async () => {
+  const store = await import('../js/core/store.js');
+  const [pf1, pf2] = store.listPortfolios();
+  store.addHolding(pf2.id, { assetId: 'KO' });
+  assert(store.listHoldings(pf1.id).some(h => h.assetId === 'MSFT'));
+  assert(!store.listHoldings(pf1.id).some(h => h.assetId === 'KO'));
+  assert(store.listHoldings(pf2.id).some(h => h.assetId === 'KO'));
+});
+
+console.log('— Evaluación de tenencias (mantener/reducir/vender) —');
+
+test('evaluateHolding: alcista sano → mantener con salud alta', () => {
+  const r = evaluateHolding({ regime: 'alcista', rsi: 55, vol: 0.15, drawdown: -0.02, momentum: 0.12, distSmaLong: 0.08 });
+  assert(r.action === 'mantener', r.action);
+  assert(r.health >= 65, `salud=${r.health}`);
+});
+
+test('evaluateHolding: bajista + momentum negativo + vol extrema → vender (urgencia alta)', () => {
+  const r = evaluateHolding({ regime: 'bajista', rsi: 35, vol: 0.5, drawdown: -0.35, momentum: -0.25, distSmaLong: -0.12 });
+  assert(r.action === 'vender' && r.urgency === 'alta', JSON.stringify(r));
+  assert(r.health <= 30, `salud=${r.health}`);
+});
+
+test('evaluateHolding: bajista suave → reducir', () => {
+  const r = evaluateHolding({ regime: 'bajista', rsi: 45, vol: 0.18, drawdown: -0.08, momentum: 0.02, distSmaLong: -0.03 });
+  assert(r.action === 'reducir', r.action);
+});
+
+test('evaluateHolding: alcista sobrecomprado con vol alta → reducir (toma de beneficios)', () => {
+  const r = evaluateHolding({ regime: 'alcista', rsi: 82, vol: 0.30, drawdown: -0.01, momentum: 0.20, distSmaLong: 0.15 });
+  assert(r.action === 'reducir', r.action);
+});
+
+test('evaluateHolding: caída protectora con vol alta → reducir', () => {
+  const r = evaluateHolding({ regime: 'transicion', rsi: 48, vol: 0.28, drawdown: -0.20, momentum: -0.05, distSmaLong: 0.0 });
+  assert(r.action === 'reducir', r.action);
+});
+
+test('evaluateHolding: estado insuficiente → null', () => {
+  assert(evaluateHolding(null) === null);
+  assert(evaluateHolding({ regime: 'alcista', rsi: null, vol: null }) === null);
+});
+
+test('evaluateHolding sobre datos reales: JNJ en el crash COVID no es "mantener"', () => {
+  const bundle = JSON.parse(readFileSync(join(root, 'data/history.json'), 'utf8'));
+  const an = new SeriesAnalyzer(bundle.series.JNJ);
+  const i = bundle.dates.indexOf('2020-03-23');
+  const r = evaluateHolding(an.stateAt(i));
+  assert(r && r.action !== 'mantener', `acción=${r?.action}`);
 });
 
 console.log('— Pipeline end-to-end sobre datos reales —');

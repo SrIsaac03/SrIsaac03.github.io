@@ -178,6 +178,31 @@ nav.tabs button:hover { background: var(--plane); }
   color: var(--ink-2); background: var(--plane);
 }
 
+/* ---------- Cartera real (tenencias) ---------- */
+
+.holding {
+  border: 1px solid var(--border); border-left-width: 4px; border-radius: 10px;
+  padding: 11px 13px; margin: 8px 0; background: var(--surface);
+}
+.holding.hold-mantener { border-left-color: var(--good); }
+.holding.hold-reducir { border-left-color: var(--warning); }
+.holding.hold-vender { border-left-color: var(--critical); }
+.hold-badge { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; color: #fff; white-space: nowrap; }
+.hold-badge.hold-mantener { background: var(--good); }
+.hold-badge.hold-reducir { background: var(--warning); color: #0b0b0b; }
+.hold-badge.hold-vender { background: var(--critical); }
+.hold-reasons { margin: 8px 0 10px 18px; padding: 0; }
+.hold-reasons li { font-size: 13px; color: var(--ink-2); margin: 2px 0; }
+.health-meter { width: 84px; height: 8px; background: var(--grid); border-radius: 999px; overflow: hidden; flex: none; }
+.hm-fill { height: 100%; border-radius: 999px; transition: width 0.3s; }
+.hm-fill.hm-mantener { background: var(--good); }
+.hm-fill.hm-reducir { background: var(--warning); }
+.hm-fill.hm-vender { background: var(--critical); }
+.asset-select {
+  flex: 1; min-width: 0; font: inherit; padding: 9px 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--plane); color: var(--ink);
+}
+
 /* ---------- Botones y formularios ---------- */
 
 button.btn {

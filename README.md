@@ -15,6 +15,9 @@ financiero personalizado.
 - **Filtro por bróker**: solo se recomienda lo que tu plataforma permite contratar, con sus
   comisiones y mínimos reales (catálogo curado: MyInvestor, Trade Republic, DEGIRO, IBKR, Revolut, BBVA).
 - **Máximo 2 portafolios** simultáneos, cada uno con su nivel de riesgo.
+- **Cartera real + evaluación de ventas**: guarda localmente los activos que ya posees; el motor
+  analiza la tendencia de cada uno y dicta **mantener / reducir / vender** con un índice de salud y
+  el porqué. No-custodial: la app nunca vende, solo te muestra los pasos para hacerlo tú.
 - **Feedback loop**: cada aceptación/rechazo (con motivo) reajusta el motor, con decaimiento temporal.
 - **Máquina del tiempo** (`?fecha=2008-09-15`): mira qué habría recomendado el motor en cualquier
   fecha desde 1991 y qué pasó en los 3 meses siguientes.

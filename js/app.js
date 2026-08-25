@@ -6,7 +6,7 @@ import { ASSETS, getAsset } from './core/assets.js';
 import { BROKERS, getBroker } from './core/brokers.js';
 import { QUESTIONS, LIKERT, CATEGORIES, CAPITAL_BANDS, INCOME_BANDS, scoreTest } from './core/profile.js';
 import { REJECT_REASONS } from './core/feedback.js';
-import { SeriesAnalyzer, generateRecommendations, timingSignal, DEFAULT_PARAMS } from './core/engine.js';
+import { SeriesAnalyzer, generateRecommendations, timingSignal, evaluateHolding, DEFAULT_PARAMS } from './core/engine.js';
 import * as store from './core/store.js';
 import { bootstrapMarketData } from './data/providers.js';
 import { lineChart } from './ui/chart.js';
@@ -94,6 +94,28 @@ function seriesFor(asset) {
   }
   market.analyzers.set(asset.id, analyzer);
   return analyzer;
+}
+
+// Evalúa una tenencia (activo poseído) analizando su tendencia actual.
+function evalHolding(assetId) {
+  const asset = getAsset(assetId);
+  if (!asset) return { asset: null, evalResult: null };
+  const an = seriesFor(asset);
+  if (!an) return { asset, evalResult: null };
+  const i = Math.min(market.lastIndex, an.lastValid);
+  const state = an.stateAt(i);
+  return { asset, evalResult: state ? evaluateHolding(state, DEFAULT_PARAMS) : null };
+}
+
+// Resumen de salud de una cartera: nº de activos que piden acción y salud media.
+function portfolioHealth(portfolio) {
+  const holdings = store.listHoldings(portfolio.id);
+  const evals = holdings.map(h => ({ h, ...evalHolding(h.assetId) }));
+  const scored = evals.filter(e => e.evalResult);
+  const needsAction = scored.filter(e => e.evalResult.action !== 'mantener');
+  const avgHealth = scored.length ? Math.round(scored.reduce((a, e) => a + e.evalResult.health, 0) / scored.length) : null;
+  return { evals, count: holdings.length, avgHealth, needsAction: needsAction.length,
+    toSell: scored.filter(e => e.evalResult.action === 'vender').length };
 }
 
 function runEngine(portfolio) {
@@ -616,6 +638,58 @@ function showRejectModal(r) {
   mb.querySelector('#cancel').onclick = close;
 }
 
+// ---------- Cartera real: fila de tenencia y modal de venta ----------
+
+const ACTION_LABEL = { mantener: 'Mantener', reducir: 'Reducir', vender: 'Vender' };
+
+function holdingRowHtml(p, e) {
+  const { h: holding, asset, evalResult } = e;
+  const name = esc(asset?.name || holding.assetId);
+  if (!evalResult) {
+    return `<div class="holding">
+      <div class="row spread"><div><strong>${name}</strong></div>
+      <button class="btn ghost sm" data-remove="${p.id}:${holding.id}" aria-label="Dejar de seguir ${name}">Quitar</button></div>
+      <p class="small muted" style="margin-top:4px">Sin datos suficientes para evaluar este activo ahora mismo.</p></div>`;
+  }
+  const a = evalResult.action;
+  return `<article class="holding hold-${a}" aria-label="${name}: ${ACTION_LABEL[a]}, salud ${evalResult.health} de 100">
+    <div class="row spread">
+      <div><strong>${name}</strong> <span class="chip">${esc(asset.symbol)}</span> <span class="hold-badge hold-${a}">${ACTION_LABEL[a]}${evalResult.urgency === 'alta' ? ' ⚠' : ''}</span></div>
+      <div class="health-meter" aria-hidden="true"><div class="hm-fill hm-${a}" style="width:${evalResult.health}%"></div></div>
+    </div>
+    <ul class="hold-reasons">${evalResult.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
+    <div class="actions">
+      ${a !== 'mantener' ? `<button class="btn sm" data-sell="${p.id}:${holding.id}" aria-label="Considerar la venta de ${name}">Considerar venta</button>` : ''}
+      <button class="btn ghost sm" data-remove="${p.id}:${holding.id}" aria-label="Dejar de seguir ${name}">Dejar de seguir</button>
+    </div>
+  </article>`;
+}
+
+function showSellModal(portfolio, holding, asset, evalResult) {
+  const s = store.getState();
+  const broker = getBroker(s.brokerId);
+  const verb = evalResult.action === 'vender' ? 'vender' : 'reducir';
+  const { mb, close } = openModal(`
+    <h2 id="modalTitle">Considera ${verb} ${esc(asset.name)}</h2>
+    <p class="ink2" style="margin:10px 0">La app nunca vende por ti. Si decides ${verb}, hazlo tú en tu plataforma:</p>
+    <ol class="ink2" style="margin:0 0 12px 18px">
+      <li>Abre <strong>${esc(broker?.name || 'tu bróker')}</strong> y localiza <strong>${esc(asset.name)}</strong>.</li>
+      <li>${evalResult.action === 'vender' ? 'Considera cerrar la posición' : 'Considera reducir parte de la posición (p. ej. la mitad)'} según tu criterio.</li>
+      <li>Recuerda el impacto fiscal de realizar plusvalías/minusvalías.</li>
+    </ol>
+    <p class="muted small">Motivo del sistema: ${esc(evalResult.reasons[0] || '')}</p>
+    <div class="row" style="margin-top:14px;gap:8px">
+      <button class="btn" id="done">Lo he ${verb === 'vender' ? 'vendido' : 'reducido'}</button>
+      <button class="btn ghost" id="later">Aún no</button>
+    </div>`, { onClose: render });
+  mb.querySelector('#done').onclick = () => {
+    store.recordDecision({ assetId: asset.id, assetClass: asset.assetClass, action: 'sold', reasonId: evalResult.action, snapshot: evalResult.state });
+    if (evalResult.action === 'vender') store.removeHolding(portfolio.id, holding.id);
+    close();
+  };
+  mb.querySelector('#later').onclick = close;
+}
+
 // ---------- Vista: Portafolios ----------
 
 function viewPortafolios() {
@@ -631,14 +705,29 @@ function viewPortafolios() {
   const list = frag.querySelector('#list');
   for (const p of portfolios) {
     const cat = CATEGORIES.find(c => c.id === p.riskLevel);
+    const health = portfolioHealth(p);
+    const notHeld = ASSETS.filter(a => !health.evals.some(e => e.h.assetId === a.id));
     list.appendChild(h(`
       <div class="card">
         <div class="row spread">
           <div>
             <h3>${esc(p.name)} <span class="chip">slot ${p.slot}</span></h3>
-            <p class="small ink2">Riesgo: ${cat?.name} · ${cat?.equityRange[0]}–${cat?.equityRange[1]}% renta variable · creado ${new Date(p.createdAt).toLocaleDateString('es-ES')}</p>
+            <p class="small ink2">Riesgo: ${cat?.name} · ${cat?.equityRange[0]}–${cat?.equityRange[1]}% renta variable</p>
           </div>
           <button class="btn ghost sm" data-del="${p.id}">Archivar</button>
+        </div>
+
+        <h4 style="margin:14px 0 2px;font-size:15px">Mi cartera real ${health.count ? `(${health.count} ${health.count === 1 ? 'activo' : 'activos'})` : ''}</h4>
+        ${health.count ? `<p class="small muted" style="margin:0 0 8px">Salud media ${health.avgHealth}/100${health.needsAction ? ` · ${health.needsAction} ${health.needsAction === 1 ? 'activo requiere' : 'activos requieren'} atención` : ' · sin alertas'}</p>` : '<p class="small muted" style="margin:0 0 8px">Aún no has añadido lo que tienes. Añádelo para que analice la tendencia y evalúe posibles ventas.</p>'}
+        <div class="holdings">${health.evals.map(e => holdingRowHtml(p, e)).join('')}</div>
+
+        <div class="add-holding row" style="margin-top:10px">
+          <label class="sr-only" for="addsel_${p.id}">Añadir un activo que posees</label>
+          <select id="addsel_${p.id}" class="asset-select" ${notHeld.length ? '' : 'disabled'}>
+            <option value="">Añadir un activo que tengo…</option>
+            ${notHeld.map(a => `<option value="${a.id}">${esc(a.name)} (${a.symbol})</option>`).join('')}
+          </select>
+          <button class="btn sm" data-addhold="${p.id}">Añadir</button>
         </div>
       </div>`));
   }
@@ -676,6 +765,29 @@ function viewPortafolios() {
       if (selectedPortfolioId === b.dataset.del) selectedPortfolioId = null;
       render();
     }
+  });
+
+  // Cartera real: añadir / quitar / considerar venta
+  $app.querySelectorAll('[data-addhold]').forEach(b => b.onclick = () => {
+    const pid = b.dataset.addhold;
+    const sel = document.getElementById('addsel_' + pid);
+    const assetId = sel && sel.value;
+    if (!assetId) return;
+    try { store.addHolding(pid, { assetId }); render(); }
+    catch (e) { alert(e.message); }
+  });
+  $app.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => {
+    const [pid, hid] = b.dataset.remove.split(':');
+    store.removeHolding(pid, hid);
+    render();
+  });
+  $app.querySelectorAll('[data-sell]').forEach(b => b.onclick = () => {
+    const [pid, hid] = b.dataset.sell.split(':');
+    const portfolio = store.listPortfolios().find(p => p.id === pid);
+    const holding = store.listHoldings(pid).find(x => x.id === hid);
+    if (!portfolio || !holding) return;
+    const { asset, evalResult } = evalHolding(holding.assetId);
+    if (asset && evalResult) showSellModal(portfolio, holding, asset, evalResult);
   });
 }
 
@@ -791,6 +903,12 @@ function viewHistorial() {
   </div>`);
   const list = frag.querySelector('#list');
   if (!ds.length) list.appendChild(h('<div class="card"><p class="ink2">Aún no has decidido sobre ninguna recomendación.</p></div>'));
+  const decLabel = (d) => {
+    if (d.action === 'accepted') return '✓ aceptada';
+    if (d.action === 'rejected') return '✕ rechazada';
+    if (d.action === 'sold') return d.reasonId === 'vender' ? '💶 vendida' : '💶 reducida';
+    return d.action;
+  };
   for (const d of ds) {
     const asset = getAsset(d.assetId);
     const reason = REJECT_REASONS.find(r => r.id === d.reasonId);
@@ -799,7 +917,7 @@ function viewHistorial() {
         <div class="row spread">
           <div>
             <strong>${esc(asset?.name || d.assetId)}</strong>
-            <span class="chip">${d.action === 'accepted' ? '✓ aceptada' : '✕ rechazada'}</span>
+            <span class="chip">${decLabel(d)}</span>
             ${reason ? `<span class="chip">${esc(reason.label)}</span>` : ''}
             ${d.note ? `<p class="small ink2" style="margin-top:4px">«${esc(d.note)}»</p>` : ''}
           </div>

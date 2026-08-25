@@ -149,6 +149,53 @@ export function confirmedTiming(indexAnalyzer, i, params = DEFAULT_PARAMS, timin
   };
 }
 
+// ---------- Evaluación de TENENCIAS (cartera real del usuario) ----------
+// Analiza la tendencia de un activo que el usuario YA posee y dicta si conviene
+// MANTENER, REDUCIR o VENDER, con un índice de salud (0-100) y el porqué.
+// Misma filosofía que el semáforo: proteger capital cuando la tendencia se rompe.
+// La app NUNCA vende: solo evalúa; el usuario ejecuta en su plataforma.
+export function evaluateHolding(state, params = DEFAULT_PARAMS) {
+  if (!state || state.rsi == null || state.vol == null) return null;
+  const { regime, rsi, vol, drawdown, momentum, distSmaLong } = state;
+  const reasons = [];
+
+  // Índice de salud para el medidor (monótono en los factores de riesgo)
+  let health = 50;
+  health += regime === 'alcista' ? 22 : regime === 'bajista' ? -28 : 0;
+  if (momentum != null) health += Math.max(-18, Math.min(18, momentum * 90));
+  if (drawdown != null) health += Math.max(-22, Math.min(0, drawdown * 80));
+  health += vol > params.volExtreme ? -12 : vol > params.volHigh ? -6 : 4;
+  if (regime === 'alcista' && rsi > params.rsiOverbought) health -= 4;
+  health = Math.round(Math.max(0, Math.min(100, health)));
+
+  const trendBroken = regime === 'bajista';
+  const negMomentum = momentum != null && momentum < -0.10;
+  const protectiveDD = drawdown != null && drawdown < -0.15 && vol > params.volHigh;
+  const capitulation = trendBroken && vol > params.volExtreme;
+
+  let action = 'mantener', urgency = 'baja';
+  if (capitulation || (trendBroken && negMomentum)) {
+    action = 'vender'; urgency = 'alta';
+    reasons.push(`Tendencia bajista: el precio está un ${pct(Math.abs(distSmaLong))} por debajo de su media de ${params.smaLong} sesiones`);
+    if (negMomentum) reasons.push(`Momentum a 12 meses negativo (${pct(momentum)})`);
+    if (vol > params.volExtreme) reasons.push(`Volatilidad extrema (${pct(vol)}): alto riesgo de más caídas`);
+  } else if (trendBroken || negMomentum || protectiveDD) {
+    action = 'reducir'; urgency = 'media';
+    if (trendBroken) reasons.push(`Ha perdido su tendencia alcista (por debajo de la media de ${params.smaLong} sesiones)`);
+    if (negMomentum) reasons.push(`Momentum debilitándose (${pct(momentum)} a 12 meses)`);
+    if (protectiveDD) reasons.push(`Caída del ${pct(drawdown)} desde máximos con volatilidad alta: conviene proteger`);
+  } else if (regime === 'alcista' && rsi > params.rsiOverbought && vol > params.volHigh) {
+    action = 'reducir'; urgency = 'baja';
+    reasons.push(`Sobrecompra (RSI ${rsi.toFixed(0)}) con volatilidad alta: puedes realizar parte de las ganancias`);
+  } else if (regime === 'alcista') {
+    reasons.push(`Tendencia alcista sana${momentum != null && momentum > 0 ? ` (momentum +${pct(momentum)})` : ''}: mantén la posición`);
+  } else {
+    reasons.push('Sin señales claras de salida: mantener y vigilar');
+  }
+
+  return { action, urgency, health, reasons, state: { regime, rsi, vol, drawdown, momentum } };
+}
+
 // ---------- Etapa 1b: ranking de activos (momentum ajustado por riesgo) ----------
 
 export function rankAssets(candidates, i, adjustments) {
