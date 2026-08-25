@@ -2,6 +2,8 @@
 // TODOS los datos del usuario viven en su dispositivo: perfil, portafolios,
 // historial de recomendaciones aceptadas/rechazadas.
 
+import { normalizeHolding, mergeLots, positionSnapshot } from './holdings.js';
+
 const KEY = 'copiloto.v1';
 export const MAX_PORTFOLIOS = 2;
 
@@ -85,35 +87,37 @@ export function archivePortfolio(id) {
 }
 
 // --- Cartera real del usuario (posiciones que ya posee) ---
-// Se guardan unidades y precio medio de compra EN LA DIVISA DEL ACTIVO. La
-// conversión a euros se hace al pintar, con el cambio del día.
+// Se guarda el IMPORTE aportado en la divisa que elija el usuario (por defecto
+// euros), opcionalmente las unidades, y el histórico de valoraciones que va
+// anotando periódicamente. Ver js/core/holdings.js para el modelo completo.
 
 export function listHoldings(portfolioId) {
-  const hs = getState().holdings;
+  const hs = getState().holdings.map(normalizeHolding);
   return portfolioId ? hs.filter(h => h.portfolioId === portfolioId) : hs;
 }
 
-// Si el activo ya está en cartera, promedia el precio de compra en lugar de
-// duplicar la línea (es lo que hace cualquier bróker con una segunda compra).
-export function addHolding({ portfolioId, assetId, assetClass, currency, units, entryPrice }) {
+// Si el activo ya está en cartera, suma la aportación en lugar de duplicar la
+// línea (es lo que hace cualquier bróker con una segunda compra).
+export function addHolding({ portfolioId, assetId, assetClass, currency, invested, units = 0, value = null }) {
   const s = getState();
-  const u = Number(units), p = Number(entryPrice);
-  if (!(u > 0)) throw new Error('Las unidades deben ser mayores que cero');
-  if (!(p > 0)) throw new Error('El precio de compra debe ser mayor que cero');
-  const existing = s.holdings.find(h => h.portfolioId === portfolioId && h.assetId === assetId);
-  if (existing) {
-    const total = existing.units + u;
-    existing.entryPrice = (existing.units * existing.entryPrice + u * p) / total;
-    existing.units = total;
-    existing.updatedAt = Date.now();
+  const amount = Number(invested), u = Number(units) || 0;
+  if (!(amount > 0)) throw new Error('El importe invertido debe ser mayor que cero');
+  if (u < 0) throw new Error('Las unidades no pueden ser negativas');
+  const now = Date.now();
+  const raw = s.holdings.find(h => h.portfolioId === portfolioId && h.assetId === assetId);
+  if (raw) {
+    const merged = mergeLots(raw, amount, u);
+    Object.assign(raw, normalizeHolding(raw), merged, { updatedAt: now });
+    if (value != null && Number(value) > 0) raw.valuations.push({ ts: now, value: Number(value) });
     save(s);
-    return existing;
+    return raw;
   }
   const holding = {
     id: 'h_' + Math.random().toString(36).slice(2, 10),
-    portfolioId, assetId, assetClass, currency: currency || 'USD',
-    units: u, entryPrice: p,
-    addedAt: Date.now(),
+    portfolioId, assetId, assetClass, currency: currency || 'EUR',
+    invested: amount, units: u,
+    valuations: value != null && Number(value) > 0 ? [{ ts: now, value: Number(value) }] : [],
+    addedAt: now,
   };
   s.holdings.push(holding);
   save(s);
@@ -122,14 +126,47 @@ export function addHolding({ portfolioId, assetId, assetClass, currency, units, 
 
 export function updateHolding(id, patch) {
   const s = getState();
-  const h = s.holdings.find(x => x.id === id);
-  if (!h) return null;
-  if (patch.units != null) h.units = Number(patch.units);
-  if (patch.entryPrice != null) h.entryPrice = Number(patch.entryPrice);
-  h.updatedAt = Date.now();
-  if (h.units <= 0) return removeHolding(id);
+  const raw = s.holdings.find(x => x.id === id);
+  if (!raw) return null;
+  Object.assign(raw, normalizeHolding(raw));
+  if (patch.invested != null) raw.invested = Number(patch.invested);
+  if (patch.units != null) raw.units = Number(patch.units);
+  raw.updatedAt = Date.now();
+  if (!(raw.invested > 0)) return removeHolding(id);
   save(s);
-  return h;
+  return raw;
+}
+
+// Anota cuánto vale HOY la posición según el bróker del usuario. Es la clave
+// para que la cartera refleje la realidad: el histórico local no llega a todos
+// los activos ni a todas las fechas.
+export function revalueHolding(id, value, ts = Date.now()) {
+  const s = getState();
+  const raw = s.holdings.find(x => x.id === id);
+  if (!raw) return null;
+  const v = Number(value);
+  if (!(v >= 0)) throw new Error('El valor actual no puede ser negativo');
+  Object.assign(raw, normalizeHolding(raw));
+  const day = new Date(ts).toISOString().slice(0, 10);
+  // una valoración por día: reanotar hoy corrige, no acumula ruido
+  const sameDay = raw.valuations.find(x => new Date(x.ts).toISOString().slice(0, 10) === day);
+  if (sameDay) { sameDay.ts = ts; sameDay.value = v; }
+  else raw.valuations.push({ ts, value: v });
+  raw.valuations.sort((a, b) => a.ts - b.ts);
+  raw.updatedAt = ts;
+  save(s);
+  return raw;
+}
+
+// Revalorización en bloque: { holdingId: valor }. Pensado para la rutina
+// periódica de "abro el bróker y pongo al día toda la cartera de una vez".
+export function revalueMany(values, ts = Date.now()) {
+  let n = 0;
+  for (const [id, value] of Object.entries(values || {})) {
+    if (value == null || value === '' || !(Number(value) >= 0)) continue;
+    if (revalueHolding(id, Number(value), ts)) n++;
+  }
+  return n;
 }
 
 export function removeHolding(id) {
@@ -141,21 +178,38 @@ export function removeHolding(id) {
 
 // Venta (total o parcial) ejecutada por el usuario en su bróker. Queda anotada
 // en el historial con action 'sold': es trazabilidad, no entrena el motor.
-export function recordSale({ id, unitsSold, price, verdict }) {
+// `amount` es el importe vendido en la divisa de la posición; se descuenta del
+// invertido y, proporcionalmente, de las unidades.
+export function recordSale({ id, amount, verdict }) {
   const s = getState();
-  const h = s.holdings.find(x => x.id === id);
-  if (!h) return null;
-  const sold = Math.min(Number(unitsSold) || 0, h.units);
-  if (sold <= 0) return h;
+  const raw = s.holdings.find(x => x.id === id);
+  if (!raw) return null;
+  Object.assign(raw, normalizeHolding(raw));
+  const snap = positionSnapshot(raw, null);
+  const value = snap.valueOrCost;
+  const sold = Math.min(Number(amount) || 0, value);
+  if (sold <= 0) return raw;
+  const fraction = value > 0 ? sold / value : 1;
+
   s.decisions.push({
-    assetId: h.assetId, assetClass: h.assetClass, action: 'sold',
-    units: sold, price: price ?? null, entryPrice: h.entryPrice,
+    assetId: raw.assetId, assetClass: raw.assetClass, action: 'sold',
+    amount: sold, currency: raw.currency,
+    units: raw.units > 0 ? raw.units * fraction : null,
     verdict: verdict || null, ts: Date.now(),
   });
-  h.units -= sold;
-  if (h.units <= 1e-9) s.holdings = s.holdings.filter(x => x.id !== id);
+
+  if (fraction >= 0.999) {
+    s.holdings = s.holdings.filter(x => x.id !== id);
+    save(s);
+    return null;
+  }
+  // se retira la parte vendida del coste, de las unidades y del valor anotado
+  raw.invested *= 1 - fraction;
+  raw.units *= 1 - fraction;
+  raw.valuations = raw.valuations.map(v => ({ ...v, value: v.value * (1 - fraction) }));
+  raw.updatedAt = Date.now();
   save(s);
-  return h.units > 0 ? h : null;
+  return raw;
 }
 
 // --- Opción de cartera elegida (una por portafolio) ---

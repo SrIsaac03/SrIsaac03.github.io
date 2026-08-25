@@ -9,7 +9,7 @@ import { REJECT_REASONS } from './core/feedback.js';
 import { SeriesAnalyzer, generateRecommendations, timingSignal, DEFAULT_PARAMS } from './core/engine.js';
 import { generateStrategyOptions } from './core/strategies.js';
 import { derivePreferences } from './core/preferences.js';
-import { portfolioSnapshot } from './core/holdings.js';
+import { portfolioSnapshot, valuationHistory } from './core/holdings.js';
 import { reviewPortfolio, VERDICTS } from './core/review.js';
 import * as store from './core/store.js';
 import { bootstrapMarketData } from './data/providers.js';
@@ -139,30 +139,37 @@ function priceInfo(asset) {
   if (!market.ready || !asset) return null;
   if (asset.assetClass === 'crypto') {
     const c = market.crypto.get(asset.id);
-    return c?.lastPrice ? { price: c.lastPrice, currency: 'USD', date: 'en vivo' } : null;
+    return c?.lastPrice ? { price: c.lastPrice, currency: 'USD', date: 'en vivo', ts: Date.now() } : null;
   }
   const vals = asset.series === 'SP500' ? market.sp500 : market.bundle?.series?.[asset.series];
   if (!vals) return null;
   let i = Math.min(market.lastIndex, vals.length - 1);
   while (i > 0 && vals[i] == null) i--;
-  return vals[i] == null ? null : { price: vals[i], currency: asset.currency || 'USD', date: market.dates[i] };
+  if (vals[i] == null) return null;
+  return {
+    price: vals[i], currency: asset.currency || 'USD',
+    date: market.dates[i], ts: Date.parse(market.dates[i]) || null,
+  };
 }
 
 const fxRate = () => market.fx?.rate ?? 1;
 
-// Homogeneiza la cartera a euros al cambio de HOY (también el precio de compra):
-// así el rendimiento que se muestra es el del activo, sin el ruido de la divisa.
+// Homogeneiza la cartera a euros al cambio de HOY: los importes del usuario van
+// en la divisa que él eligió; el precio de mercado, en la del activo.
 function eurHoldings(holdings) {
   return holdings.map(h => {
     const asset = getAsset(h.assetId);
     const info = priceInfo(asset);
-    const r = h.currency === 'EUR' ? 1 : fxRate();
+    const hr = h.currency === 'EUR' ? 1 : fxRate();               // importes del usuario
+    const ar = (asset?.currency || 'USD') === 'EUR' ? 1 : fxRate(); // precio del activo
     return {
       ...h,
       assetClass: h.assetClass || asset?.assetClass || 'otros',
       assetName: asset?.name || h.assetId,
-      entryPrice: h.entryPrice * r,
-      livePrice: info ? info.price * r : null,
+      invested: h.invested * hr,
+      valuations: (h.valuations || []).map(v => ({ ...v, value: v.value * hr })),
+      livePrice: info ? info.price * ar : null,
+      priceTs: info ? info.ts : null,
       priceDate: info?.date || null,
     };
   });
@@ -182,7 +189,7 @@ function runReview(portfolio, targetEquityPct) {
   const snapshot = portfolioSnapshot(
     eurHoldings(store.listHoldings(portfolio.id)),
     h => h.livePrice,
-    { capitalBase: ctx.capitalMid },
+    { capitalBase: ctx.capitalMid, priceTsOf: h => h.priceTs },
   );
   const out = reviewPortfolio({
     snapshot,
@@ -253,6 +260,17 @@ const fmtEur0 = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'E
 const fmtEur2 = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 });
 const fmtUnits = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 6 });
 const round1 = x => Math.round(x * 10) / 10;
+
+// De dónde sale el valor de una posición, para que nunca haya duda de si la
+// cifra que se ve es un dato del usuario o una cotización.
+function valuationLabel(p) {
+  if (!p.valued) return 'sin valorar: se usa el coste';
+  const when = p.staleDays === 0 ? 'hoy'
+    : p.staleDays === 1 ? 'ayer'
+    : p.staleDays != null ? `hace ${p.staleDays} días`
+    : '';
+  return p.valueSource === 'manual' ? `valor que anotaste ${when}` : `a precio de mercado ${when}`;
+}
 
 // ---------- Navegación ----------
 
@@ -823,6 +841,14 @@ function viewCartera() {
       <span class="small muted">salud ${health}/100</span>
     </div>`;
 
+  // Frescura de la foto: sin valores puestos al día, la cartera es ficción
+  const history = valuationHistory(eurHoldings(store.listHoldings(pf.id)));
+  const staleWarn = snap.staleDays != null && snap.staleDays > 30;
+  const freshness = snap.positions.length === 0 ? ''
+    : snap.staleDays == null ? 'Sin valores anotados todavía'
+    : snap.staleDays === 0 ? 'Valores al día de hoy'
+    : `Última actualización hace ${snap.staleDays} ${snap.staleDays === 1 ? 'día' : 'días'}`;
+
   const frag = h(`<div class="fade-in">
     ${portfolios.length > 1 ? `
       <div class="row" style="margin-top:10px" role="group" aria-label="Elegir portafolio">
@@ -836,18 +862,30 @@ function viewCartera() {
       </div>
       ${snap.positions.length ? `
         <div class="tiles" role="list" style="margin-top:12px">
-          <div class="tile" role="listitem"><div class="k">Valor actual</div><div class="v">${fmtEur0.format(snap.totalValue)}</div><div class="k">al cambio de hoy</div></div>
-          <div class="tile" role="listitem"><div class="k">Ganancia / pérdida</div><div class="v" style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur0.format(snap.pnl)}</div><div class="k">${fmtPct(snap.pnlPct)} sobre coste</div></div>
+          <div class="tile" role="listitem"><div class="k">Valor actual</div><div class="v">${fmtEur0.format(snap.totalValue)}</div><div class="k">invertido ${fmtEur0.format(snap.totalCost)}</div></div>
+          <div class="tile" role="listitem"><div class="k">Ganancia / pérdida</div><div class="v" style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur0.format(snap.pnl)}</div><div class="k">${fmtPct(snap.pnlPct)}${snap.annualizedPct != null ? ` · ${fmtPct(snap.annualizedPct)} anual` : ''}</div></div>
           <div class="tile" role="listitem"><div class="k">Capital invertido</div><div class="v">${Math.round(snap.investedPct)}%</div><div class="k">${choice ? `objetivo ${choice.equityPct}%` : 'elige un plan en Hoy'}</div></div>
           ${rv.health != null ? `<div class="tile" role="listitem"><div class="k">Salud de la cartera</div><div class="v">${rv.health}<span class="small muted" style="font-weight:400">/100</span></div><div class="k">media ponderada por valor</div></div>` : ''}
         </div>
-        ${snap.stale ? '<p class="small muted" style="margin-top:10px">Alguna posición no tiene precio actualizado: se valora a su precio de compra.</p>' : ''}
+        <div class="row spread" style="margin-top:12px">
+          <span class="small ${staleWarn ? 'ink2' : 'muted'}">${esc(freshness)}</span>
+          <button class="btn sm" id="revalAll">Actualizar valores</button>
+        </div>
+        ${staleWarn ? `<div class="banner warn" style="margin-bottom:0">Los valores llevan ${snap.staleDays} días sin actualizarse: las rentabilidades y los veredictos que ves pueden no reflejar tu situación real. Ponlos al día con tu bróker abierto.</div>` : ''}
+        ${snap.unvalued ? `<p class="small muted" style="margin-top:10px">${snap.unvalued} ${snap.unvalued === 1 ? 'posición se valora' : 'posiciones se valoran'} a su coste porque aún no ${snap.unvalued === 1 ? 'tiene' : 'tienen'} valor anotado ni precio de mercado.</p>` : ''}
       ` : `
         <p class="ink2" style="margin-top:10px">Aún no has registrado nada. Añade abajo lo que <strong>ya tienes</strong> en tu bróker
         y el motor analizará la tendencia de cada activo para decirte qué mantener, qué reforzar y qué vender.</p>
         <p class="small muted">Se guarda solo en este dispositivo. No conectamos con tu bróker ni enviamos nada a ningún servidor.</p>
       `}
     </div>
+
+    ${history.length >= 2 ? `
+      <div class="card">
+        <h2>Evolución de tu cartera</h2>
+        <p class="small muted">Construida con los valores que has ido anotando (${history.length} actualizaciones).</p>
+        <div id="evolution"></div>
+      </div>` : ''}
 
     ${rv.alerts.map(a => `<div class="banner ${a.level === 'warn' ? 'warn' : 'info'}">${esc(a.text)}</div>`).join('')}
 
@@ -874,13 +912,19 @@ function viewCartera() {
           <div class="pct" style="color:${pnlColor(p.pnlPct)}">${p.pnlPct == null ? '—' : (p.pnlPct >= 0 ? '+' : '') + fmtPct(p.pnlPct)}</div>
         </div>
         ${meter(r.health, r.verdict)}
+        <p class="small" style="margin:0 0 4px">
+          <strong>${fmtEur2.format(p.valueOrCost)}</strong>
+          <span class="muted">· invertido ${fmtEur2.format(p.cost)}
+          ${p.pnl != null ? `· <span style="color:${pnlColor(p.pnl)}">${p.pnl >= 0 ? '+' : ''}${fmtEur2.format(p.pnl)}</span>` : ''}
+          ${p.annualizedPct != null ? `· ${fmtPct(p.annualizedPct)} anual` : ''}</span>
+        </p>
         <p class="small muted" style="margin:0 0 8px">
-          ${fmtUnits.format(p.units)} × ${fmtEur2.format(p.entryPrice)} de coste medio ·
-          valor ${fmtEur2.format(p.valueOrCost)} · ${round1(p.capitalPct)}% de tu capital
-          ${p.priceDate ? ` · precio ${esc(String(p.priceDate))}` : ''}
+          ${p.units > 0 ? `${fmtUnits.format(p.units)} uds. × ${fmtEur2.format(p.entryPrice)} de coste medio · ` : ''}
+          ${round1(p.capitalPct)}% de tu capital · ${esc(valuationLabel(p))}
         </p>
         <ul>${[...r.reasons, ...(r.info || [])].map(x => `<li>${esc(x)}</li>`).join('')}</ul>
         <div class="actions">
+          <button class="btn sm ghost" data-reval="${p.id}">Actualizar valor</button>
           ${r.verdict === 'vender' || r.verdict === 'reducir'
             ? `<button class="btn sm" data-sell="${p.id}">Registrar venta</button>`
             : ''}
@@ -896,7 +940,7 @@ function viewCartera() {
   for (const x of priceable) (byClass[x.a.assetClass] ||= []).push(x);
   frag.querySelector('#addCard').innerHTML = `
     <h3>Añadir lo que ya tienes</h3>
-    <p class="small muted">Unidades y precio medio de compra, en la divisa del activo. Si ya tienes ese activo, se promedia con lo que había.</p>
+    <p class="small muted">Lo único imprescindible es <strong>cuánto dinero</strong> tienes puesto. Si ya tienes ese activo, se suma a lo que había.</p>
     <label class="small ink2" for="hAsset">Activo</label>
     <select id="hAsset" class="field">
       ${Object.entries(byClass).map(([cls, items]) => `<optgroup label="${esc(cls.toUpperCase())}">
@@ -904,15 +948,21 @@ function viewCartera() {
       </optgroup>`).join('')}
     </select>
     <div class="row" style="gap:10px;margin-top:10px">
-      <div style="flex:1">
-        <label class="small ink2" for="hUnits">Unidades</label>
-        <input id="hUnits" class="field" type="number" min="0" step="any" inputmode="decimal" placeholder="ej. 12">
+      <div style="flex:1;min-width:120px">
+        <label class="small ink2" for="hInvested">Importe invertido (€)</label>
+        <input id="hInvested" class="field" type="number" min="0" step="any" inputmode="decimal" placeholder="ej. 1500">
       </div>
-      <div style="flex:1">
-        <label class="small ink2" for="hPrice">Precio medio de compra</label>
-        <input id="hPrice" class="field" type="number" min="0" step="any" inputmode="decimal" placeholder="ej. 180.50">
+      <div style="flex:1;min-width:120px">
+        <label class="small ink2" for="hValue">Valor actual (€) <span class="muted">opcional</span></label>
+        <input id="hValue" class="field" type="number" min="0" step="any" inputmode="decimal" placeholder="lo que marca tu bróker">
       </div>
     </div>
+    <details style="margin-top:6px">
+      <summary class="small muted">Añadir también las unidades (opcional)</summary>
+      <label class="small ink2" for="hUnits" style="display:block;margin-top:8px">Nº de participaciones o acciones</label>
+      <input id="hUnits" class="field" type="number" min="0" step="any" inputmode="decimal" placeholder="ej. 12">
+      <p class="small muted">Con las unidades podemos valorar la posición a precio de mercado cuando tengamos cotización, sin que tengas que actualizarla a mano.</p>
+    </details>
     <p class="small muted" id="hHint" style="margin-top:8px"></p>
     <button class="btn" id="hAdd" style="margin-top:6px">Añadir a mi cartera</button>`;
 
@@ -976,27 +1026,47 @@ function viewCartera() {
     const a = getAsset(sel.value);
     const info = priceInfo(a);
     hint.textContent = info
-      ? `Último precio de ${a.name}: ${info.price.toFixed(2)} ${info.currency} (${info.date}). El precio que introduzcas es el tuyo de compra, en ${info.currency}.`
+      ? `Último precio conocido de ${a.name}: ${info.price.toFixed(2)} ${info.currency} (${info.date}). Los importes van en euros.`
       : '';
   };
   if (sel) { sel.onchange = showHint; showHint(); }
   const addBtn = document.getElementById('hAdd');
   if (addBtn) addBtn.onclick = () => {
     const a = getAsset(sel.value);
-    const units = parseFloat(document.getElementById('hUnits').value);
-    const price = parseFloat(document.getElementById('hPrice').value);
-    if (!a || !(units > 0) || !(price > 0)) {
-      hint.textContent = 'Revisa los datos: unidades y precio deben ser mayores que cero.';
+    const invested = parseFloat(document.getElementById('hInvested').value);
+    const units = parseFloat(document.getElementById('hUnits').value) || 0;
+    const value = parseFloat(document.getElementById('hValue').value);
+    if (!a || !(invested > 0)) {
+      hint.textContent = 'Indica al menos cuánto dinero tienes invertido en este activo.';
       return;
     }
     try {
       store.addHolding({
         portfolioId: pf.id, assetId: a.id, assetClass: a.assetClass,
-        currency: a.currency || 'USD', units, entryPrice: price,
+        currency: 'EUR', invested, units,
+        value: value > 0 ? value : null,
       });
       render();
     } catch (e) { hint.textContent = e.message; }
   };
+
+  // --- Actualización periódica de valores ---
+  document.getElementById('revalAll')?.addEventListener('click', () => showRevalueAllModal(snap));
+  $app.querySelectorAll('[data-reval]').forEach(b => b.onclick = () => {
+    const p = snap.positions.find(x => x.id === b.dataset.reval);
+    showRevalueModal(p);
+  });
+
+  // --- Evolución de la cartera ---
+  const evo = document.getElementById('evolution');
+  if (evo) {
+    lineChart(evo, {
+      dates: history.map(x => x.date),
+      values: history.map(x => x.value),
+      label: 'Valor total de tu cartera según los valores que has ido anotando',
+      formatValue: v => fmtEur0.format(v),
+    });
+  }
 
   // --- Acciones sobre posiciones ---
   $app.querySelectorAll('[data-sell]').forEach(b => b.onclick = () => {
@@ -1016,28 +1086,93 @@ function viewCartera() {
   });
 }
 
+// Anotar cuánto vale HOY una posición según el bróker del usuario. Es lo que
+// mantiene la cartera pegada a la realidad cuando no hay cotización fiable.
+function showRevalueModal(position) {
+  const { mb, close } = openModal(`
+    <h2 id="modalTitle">Actualizar valor de ${esc(position.assetName)}</h2>
+    <p class="ink2" style="margin:10px 0">Abre tu bróker y copia aquí lo que vale hoy esta posición.
+      Con eso calculamos tu rentabilidad real y afinamos el veredicto.</p>
+    <p class="small muted">Invertido: ${fmtEur2.format(position.cost)} · valor registrado ahora: ${fmtEur2.format(position.valueOrCost)} (${esc(valuationLabel(position))}).</p>
+    <label class="small ink2" for="rValue" style="display:block;margin-top:10px">Valor actual (€)</label>
+    <input id="rValue" class="field" type="number" min="0" step="any" inputmode="decimal" value="${Math.round(position.valueOrCost * 100) / 100}">
+    <div class="row spread" style="margin-top:14px">
+      <button class="btn ghost sm" id="cancel">Cancelar</button>
+      <button class="btn sm" id="ok">Guardar valor</button>
+    </div>`);
+  mb.querySelector('#cancel').onclick = close;
+  mb.querySelector('#ok').onclick = () => {
+    const v = parseFloat(mb.querySelector('#rValue').value);
+    if (!(v >= 0)) return;
+    store.revalueHolding(position.id, toHoldingCurrency(position, v));
+    close();
+    render();
+  };
+}
+
+// Puesta al día de toda la cartera de una sentada: la rutina periódica.
+function showRevalueAllModal(snap) {
+  const { mb, close } = openModal(`
+    <h2 id="modalTitle">Actualizar toda la cartera</h2>
+    <p class="ink2" style="margin:10px 0">Con tu bróker delante, pon el valor de hoy de cada posición.
+      Deja en blanco las que no quieras tocar.</p>
+    <div id="rows">
+      ${snap.positions.map(p => `
+        <div style="margin-bottom:10px">
+          <label class="small ink2" for="rv_${p.id}">${esc(p.assetName)}
+            <span class="muted">· invertido ${fmtEur2.format(p.cost)} · ${esc(valuationLabel(p))}</span></label>
+          <input id="rv_${p.id}" data-h="${p.id}" class="field rv" type="number" min="0" step="any"
+                 inputmode="decimal" value="${Math.round(p.valueOrCost * 100) / 100}">
+        </div>`).join('')}
+    </div>
+    <div class="row spread" style="margin-top:14px">
+      <button class="btn ghost sm" id="cancel">Cancelar</button>
+      <button class="btn sm" id="ok">Guardar todo</button>
+    </div>`);
+  mb.querySelector('#cancel').onclick = close;
+  mb.querySelector('#ok').onclick = () => {
+    const values = {};
+    mb.querySelectorAll('.rv').forEach(inp => {
+      const v = parseFloat(inp.value);
+      if (!(v >= 0)) return;
+      const p = snap.positions.find(x => x.id === inp.dataset.h);
+      values[inp.dataset.h] = toHoldingCurrency(p, v);
+    });
+    store.revalueMany(values);
+    close();
+    render();
+  };
+}
+
+// La vista trabaja en euros; el almacén, en la divisa que eligió la posición.
+function toHoldingCurrency(position, eurAmount) {
+  return position.currency === 'EUR' ? eurAmount : eurAmount / fxRate();
+}
+
 // Registrar una venta (total o parcial). La app no vende: anota lo que el
 // usuario ha ejecutado en su bróker para que la cartera siga siendo fiel.
 function showSellModal(position, review) {
+  const value = position.valueOrCost;
   const suggested = review?.verdict === 'vender'
-    ? position.units
-    : Math.max(0, position.units * (review?.reduceByPct || 0) / Math.max(position.capitalPct, 0.001));
-  const defUnits = Math.min(position.units, Math.round(suggested * 1e6) / 1e6) || position.units;
+    ? value
+    : value * Math.min(1, (review?.reduceByPct || 0) / Math.max(position.capitalPct, 0.001));
+  const defAmount = Math.round(Math.min(value, suggested || value) * 100) / 100;
   const { mb, close } = openModal(`
     <h2 id="modalTitle">Registrar venta de ${esc(position.assetName)}</h2>
     <p class="ink2" style="margin:10px 0">Vende tú en tu bróker y anótalo aquí. El motor sugiere
       ${review?.verdict === 'vender' ? '<strong>salir de la posición</strong>' : `<strong>reducir hasta el ${review?.targetPct}% de tu capital</strong>`}.</p>
-    <label class="small ink2" for="sUnits">Unidades vendidas (tienes ${fmtUnits.format(position.units)})</label>
-    <input id="sUnits" class="field" type="number" min="0" step="any" inputmode="decimal" value="${defUnits}">
+    <label class="small ink2" for="sAmount">Importe vendido en € (la posición vale ${fmtEur2.format(value)})</label>
+    <input id="sAmount" class="field" type="number" min="0" step="any" inputmode="decimal" value="${defAmount}">
+    <p class="small muted">Se descuenta del importe invertido y, si las tienes anotadas, de las unidades en la misma proporción.</p>
     <div class="row spread" style="margin-top:14px">
       <button class="btn ghost sm" id="cancel">Cancelar</button>
       <button class="btn sm" id="ok">Registrar</button>
     </div>`);
   mb.querySelector('#cancel').onclick = close;
   mb.querySelector('#ok').onclick = () => {
-    const u = parseFloat(mb.querySelector('#sUnits').value);
-    if (!(u > 0)) return;
-    store.recordSale({ id: position.id, unitsSold: u, price: position.price, verdict: review?.verdict });
+    const amount = parseFloat(mb.querySelector('#sAmount').value);
+    if (!(amount > 0)) return;
+    store.recordSale({ id: position.id, amount: toHoldingCurrency(position, amount), verdict: review?.verdict });
     close();
     render();
   };
@@ -1046,24 +1181,21 @@ function showSellModal(position, review) {
 function showEditHoldingModal(position) {
   const { mb, close } = openModal(`
     <h2 id="modalTitle">Editar ${esc(position.assetName)}</h2>
-    <p class="small muted" style="margin:10px 0">Corrige las unidades o el precio medio si no coinciden con tu bróker.</p>
-    <label class="small ink2" for="eUnits">Unidades</label>
-    <input id="eUnits" class="field" type="number" min="0" step="any" inputmode="decimal" value="${position.units}">
-    <label class="small ink2" for="ePrice" style="display:block;margin-top:10px">Precio medio de compra (€ al cambio de hoy)</label>
-    <input id="ePrice" class="field" type="number" min="0" step="any" inputmode="decimal" value="${Math.round(position.entryPrice * 100) / 100}">
+    <p class="small muted" style="margin:10px 0">Corrige lo que no coincida con tu bróker. Para el valor de hoy usa «Actualizar valor».</p>
+    <label class="small ink2" for="eInvested">Importe invertido (€)</label>
+    <input id="eInvested" class="field" type="number" min="0" step="any" inputmode="decimal" value="${Math.round(position.cost * 100) / 100}">
+    <label class="small ink2" for="eUnits" style="display:block;margin-top:10px">Unidades <span class="muted">opcional</span></label>
+    <input id="eUnits" class="field" type="number" min="0" step="any" inputmode="decimal" value="${position.units || ''}">
     <div class="row spread" style="margin-top:14px">
       <button class="btn ghost sm" id="cancel">Cancelar</button>
       <button class="btn sm" id="ok">Guardar</button>
     </div>`);
   mb.querySelector('#cancel').onclick = close;
   mb.querySelector('#ok').onclick = () => {
-    const units = parseFloat(mb.querySelector('#eUnits').value);
-    const priceEur = parseFloat(mb.querySelector('#ePrice').value);
-    if (!(units > 0) || !(priceEur > 0)) return;
-    // el almacén guarda el precio en la divisa del activo: deshacemos el cambio
-    const asset = getAsset(position.assetId);
-    const r = (asset?.currency || 'USD') === 'EUR' ? 1 : fxRate();
-    store.updateHolding(position.id, { units, entryPrice: priceEur / r });
+    const investedEur = parseFloat(mb.querySelector('#eInvested').value);
+    const units = parseFloat(mb.querySelector('#eUnits').value) || 0;
+    if (!(investedEur > 0)) return;
+    store.updateHolding(position.id, { invested: toHoldingCurrency(position, investedEur), units });
     close();
     render();
   };

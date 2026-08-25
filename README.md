@@ -15,11 +15,16 @@ financiero personalizado.
 - **Varias opciones de cartera, no una prefabricada**: cada día el motor propone hasta 4 formas
   distintas de aplicar tu perfil (Núcleo indexado, Defensiva, Tendencia, Reparto amplio), con su
   composición, sus contras y su encaje con tu test. Eliges tú; cambiar de opción es gratis.
-- **Cartera local**: registras lo que **ya tienes** (unidades y precio medio) y el motor la valora y
-  analiza la tendencia de cada posición para dictar **vender / reducir / mantener / reforzar**, con
-  un índice de salud 0-100 por activo y alertas de deriva y concentración. Nunca recomienda vender
-  por estar en pérdidas: solo por ruptura de tendencia, riesgo o desequilibrio de la cartera.
-  No-custodial: la app nunca vende, solo registra lo que tú ejecutas en tu plataforma.
+- **Cartera local con importes reales**: registras lo que **ya tienes** indicando el **importe
+  invertido** (las unidades son opcionales) y vas **anotando periódicamente cuánto vale** — de una
+  en una o toda la cartera de golpe. De ahí salen tu rentabilidad real, la anualizada y la evolución
+  del valor en el tiempo. Si el valor lleva más de 30 días sin tocarse, la app te avisa de que la
+  foto ya no es fiable.
+- **Evaluación de ventas**: el motor analiza la tendencia de cada posición y dicta
+  **vender / reducir / mantener / reforzar**, con un índice de salud 0-100 por activo y alertas de
+  deriva y concentración. Nunca recomienda vender por estar en pérdidas: solo por ruptura de
+  tendencia, riesgo o desequilibrio de la cartera. No-custodial: la app nunca vende, solo registra
+  lo que tú ejecutas en tu plataforma.
 - **Recomendaciones por porcentajes** del capital y de los ingresos, nunca importes fijos.
 - **Semáforo de timing** (invertir / escalonar / esperar en liquidez) validado por backtest.
 - **Filtro por bróker**: solo se recomienda lo que tu plataforma permite contratar, con sus
@@ -40,7 +45,7 @@ financiero personalizado.
   Se ejecuta idéntico en navegador y en Node (tests/backtest). Módulos añadidos:
   - `preferences.js` — traduce las respuestas del test en reglas sobre qué comprar (etapa 0).
   - `strategies.js` — genera las opciones de cartera alternativas a partir del mismo pipeline.
-  - `holdings.js` — valoración, plusvalías y pesos de la cartera real del usuario.
+  - `holdings.js` — importes, valoraciones periódicas, plusvalías y evolución de la cartera real.
   - `review.js` — etapa 6: veredicto de venta/mantenimiento por posición y alertas de cartera.
 - `js/data/providers.js` — proveedores de datos con timeout y fallback.
 - `backtest/` — backtesting y afinado de parámetros con validación fuera de muestra.
@@ -49,7 +54,7 @@ financiero personalizado.
 
 ```bash
 node tools/build-data.mjs     # regenerar data/history.json desde los CSV
-node tests/run.mjs            # suite de tests unitarios (74 tests)
+node tests/run.mjs            # suite de tests unitarios (82 tests)
 node backtest/tune.mjs        # búsqueda en rejilla de parámetros (train 1991-2010)
 node backtest/backtest.mjs    # informe completo → backtest/REPORT.md
 python3 -m http.server 8321   # servir la app en local

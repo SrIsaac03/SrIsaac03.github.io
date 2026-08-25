@@ -118,8 +118,7 @@ await check('Cartera: registrar una posición y recibir veredicto de tendencia',
   await page.locator('nav.tabs button:has-text("Cartera")').click();
   await page.waitForSelector('#hAsset');
   await page.selectOption('#hAsset', 'KO');
-  await page.fill('#hUnits', '20');
-  await page.fill('#hPrice', '40');
+  await page.fill('#hInvested', '800');
   await page.click('#hAdd');
   await page.waitForSelector('.holding', { timeout: 5000 });
   const txt = await page.locator('.holding').first().innerText();
@@ -132,11 +131,42 @@ await check('Cartera: registrar una posición y recibir veredicto de tendencia',
   if (!(await page.locator('text=Salud de la cartera').count())) throw new Error('sin salud global de la cartera');
 });
 
-await check('La cartera persiste al recargar (almacenamiento local)', async () => {
+await check('Se puede añadir una posición solo con el importe, sin unidades', async () => {
+  const txt = await page.locator('.holding').first().innerText();
+  if (!/800/.test(txt)) throw new Error('no refleja el importe invertido: ' + txt);
+  if (!/sin valorar|coste/.test(txt)) throw new Error('debería avisar de que aún no está valorada');
+});
+
+await check('Actualizar el valor recalcula la rentabilidad real', async () => {
+  await page.locator('[data-reval]').first().click();
+  await page.waitForSelector('#rValue');
+  await page.fill('#rValue', '1000');
+  await page.locator('.modal #ok').click();
+  await page.waitForSelector('.modal', { state: 'detached' });
+  const txt = await page.locator('.holding').first().innerText();
+  if (!/\+25,0%|\+25%/.test(txt)) throw new Error('no calcula el +25% (800 → 1000): ' + txt);
+  if (!/anotaste hoy/.test(txt)) throw new Error('no indica el origen del valor: ' + txt);
+  const resumen = await page.locator('.card').first().innerText();
+  if (!/Valores al día de hoy/.test(resumen)) throw new Error('sin indicador de frescura');
+});
+
+await check('Actualización periódica en bloque de toda la cartera', async () => {
+  await page.locator('#revalAll').click();
+  await page.waitForSelector('.modal .rv');
+  await page.locator('.modal .rv').first().fill('1200');
+  await page.locator('.modal #ok').click();
+  await page.waitForSelector('.modal', { state: 'detached' });
+  const txt = await page.locator('.holding').first().innerText();
+  if (!/\+50,0%|\+50%/.test(txt)) throw new Error('la actualización en bloque no aplicó: ' + txt);
+});
+
+await check('La cartera y sus valoraciones persisten al recargar (almacenamiento local)', async () => {
   await page.reload({ waitUntil: 'networkidle' });
   await page.locator('nav.tabs button:has-text("Cartera")').click();
   await page.waitForSelector('.holding', { timeout: 10000 });
-  if (!/Coca-Cola/.test(await page.locator('.holding').first().innerText())) throw new Error('se perdió la posición');
+  const txt = await page.locator('.holding').first().innerText();
+  if (!/Coca-Cola/.test(txt)) throw new Error('se perdió la posición');
+  if (!/\+50,0%|\+50%/.test(txt)) throw new Error('se perdió la valoración anotada: ' + txt);
 });
 
 await check('Portafolios: crear el 2º funciona, el 3º está bloqueado', async () => {
