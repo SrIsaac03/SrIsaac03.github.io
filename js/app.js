@@ -814,6 +814,14 @@ function viewCartera() {
   const snap = rv.snapshot;
   const reviewOf = id => rv.reviews.find(r => r.assetId === id);
   const pnlColor = x => (x == null ? 'var(--ink-2)' : x >= 0 ? 'var(--good-text)' : 'var(--critical)');
+  // Medidor de salud 0-100: resumen visual de los factores del veredicto
+  const meter = (health, verdict) => health == null ? '' : `
+    <div class="row" style="gap:8px;margin:2px 0 8px">
+      <div class="health-meter" role="img" aria-label="Salud técnica ${health} sobre 100">
+        <div class="hm-fill hm-${verdict}" style="width:${health}%"></div>
+      </div>
+      <span class="small muted">salud ${health}/100</span>
+    </div>`;
 
   const frag = h(`<div class="fade-in">
     ${portfolios.length > 1 ? `
@@ -831,6 +839,7 @@ function viewCartera() {
           <div class="tile" role="listitem"><div class="k">Valor actual</div><div class="v">${fmtEur0.format(snap.totalValue)}</div><div class="k">al cambio de hoy</div></div>
           <div class="tile" role="listitem"><div class="k">Ganancia / pérdida</div><div class="v" style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur0.format(snap.pnl)}</div><div class="k">${fmtPct(snap.pnlPct)} sobre coste</div></div>
           <div class="tile" role="listitem"><div class="k">Capital invertido</div><div class="v">${Math.round(snap.investedPct)}%</div><div class="k">${choice ? `objetivo ${choice.equityPct}%` : 'elige un plan en Hoy'}</div></div>
+          ${rv.health != null ? `<div class="tile" role="listitem"><div class="k">Salud de la cartera</div><div class="v">${rv.health}<span class="small muted" style="font-weight:400">/100</span></div><div class="k">media ponderada por valor</div></div>` : ''}
         </div>
         ${snap.stale ? '<p class="small muted" style="margin-top:10px">Alguna posición no tiene precio actualizado: se valora a su precio de compra.</p>' : ''}
       ` : `
@@ -864,6 +873,7 @@ function viewCartera() {
           </div>
           <div class="pct" style="color:${pnlColor(p.pnlPct)}">${p.pnlPct == null ? '—' : (p.pnlPct >= 0 ? '+' : '') + fmtPct(p.pnlPct)}</div>
         </div>
+        ${meter(r.health, r.verdict)}
         <p class="small muted" style="margin:0 0 8px">
           ${fmtUnits.format(p.units)} × ${fmtEur2.format(p.entryPrice)} de coste medio ·
           valor ${fmtEur2.format(p.valueOrCost)} · ${round1(p.capitalPct)}% de tu capital

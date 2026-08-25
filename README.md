@@ -15,10 +15,11 @@ financiero personalizado.
 - **Varias opciones de cartera, no una prefabricada**: cada día el motor propone hasta 4 formas
   distintas de aplicar tu perfil (Núcleo indexado, Defensiva, Tendencia, Reparto amplio), con su
   composición, sus contras y su encaje con tu test. Eliges tú; cambiar de opción es gratis.
-- **Cartera local**: registras lo que **ya tienes** (unidades y precio medio) y el motor analiza la
-  tendencia de cada posición para dictar **vender / reducir / mantener / reforzar**, con alertas de
-  deriva y concentración. Nunca recomienda vender por estar en pérdidas: solo por ruptura de
-  tendencia, riesgo o desequilibrio de la cartera.
+- **Cartera local**: registras lo que **ya tienes** (unidades y precio medio) y el motor la valora y
+  analiza la tendencia de cada posición para dictar **vender / reducir / mantener / reforzar**, con
+  un índice de salud 0-100 por activo y alertas de deriva y concentración. Nunca recomienda vender
+  por estar en pérdidas: solo por ruptura de tendencia, riesgo o desequilibrio de la cartera.
+  No-custodial: la app nunca vende, solo registra lo que tú ejecutas en tu plataforma.
 - **Recomendaciones por porcentajes** del capital y de los ingresos, nunca importes fijos.
 - **Semáforo de timing** (invertir / escalonar / esperar en liquidez) validado por backtest.
 - **Filtro por bróker**: solo se recomienda lo que tu plataforma permite contratar, con sus
@@ -48,7 +49,7 @@ financiero personalizado.
 
 ```bash
 node tools/build-data.mjs     # regenerar data/history.json desde los CSV
-node tests/run.mjs            # suite de tests unitarios (71 tests)
+node tests/run.mjs            # suite de tests unitarios (74 tests)
 node backtest/tune.mjs        # búsqueda en rejilla de parámetros (train 1991-2010)
 node backtest/backtest.mjs    # informe completo → backtest/REPORT.md
 python3 -m http.server 8321   # servir la app en local

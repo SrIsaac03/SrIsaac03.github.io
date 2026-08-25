@@ -20,6 +20,21 @@ export const VERDICTS = {
 
 const SEVERITY = { sin_datos: -1, reforzar: 0, mantener: 0, reducir: 2, vender: 3 };
 
+// Índice de salud 0-100 del activo, para el medidor visual. Es un resumen
+// continuo y monótono de los mismos factores que dictan el veredicto: sirve
+// para comparar posiciones de un vistazo, no para decidir por sí solo.
+export function healthScore(state, params = DEFAULT_PARAMS) {
+  if (!state || state.rsi == null || state.vol == null) return null;
+  const { regime, rsi, vol, drawdown, momentum } = state;
+  let health = 50;
+  health += regime === 'alcista' ? 22 : regime === 'bajista' ? -28 : 0;
+  if (momentum != null) health += Math.max(-18, Math.min(18, momentum * 90));
+  if (drawdown != null) health += Math.max(-22, Math.min(0, drawdown * 80));
+  health += vol > params.volExtreme ? -12 : vol > params.volHigh ? -6 : 4;
+  if (regime === 'alcista' && rsi > params.rsiOverbought) health -= 4;
+  return Math.round(Math.max(0, Math.min(100, health)));
+}
+
 const pct = x => (x == null ? '—' : (x * 100).toFixed(1) + '%');
 const round1 = x => Math.round(x * 10) / 10;
 
@@ -39,6 +54,7 @@ export function reviewHolding({ position, asset, state, capPct, preferences, par
     return {
       assetId: position.assetId,
       verdict: 'sin_datos', urgency: 0,
+      health: null,
       targetPct: round1(position.capitalPct),
       reasons: ['No hay histórico suficiente de este activo para evaluar su tendencia.'],
     };
@@ -124,6 +140,7 @@ export function reviewHolding({ position, asset, state, capPct, preferences, par
   return {
     assetId: position.assetId,
     verdict, urgency,
+    health: healthScore(state, params),
     targetPct,
     reduceByPct: round1(Math.max(0, position.capitalPct - targetPct)),
     reasons, info,
@@ -182,5 +199,15 @@ export function reviewPortfolio(ctx) {
 
   const counts = reviews.reduce((acc, r) => { acc[r.verdict] = (acc[r.verdict] || 0) + 1; return acc; }, {});
 
-  return { reviews, alerts, counts, snapshot };
+  // Salud de la cartera: media de las posiciones ponderada por su valor
+  let wSum = 0, hSum = 0;
+  for (const r of reviews) {
+    if (r.health == null) continue;
+    const p = snapshot.positions.find(x => x.assetId === r.assetId);
+    const w = p?.valueOrCost || 0;
+    hSum += r.health * w; wSum += w;
+  }
+  const health = wSum > 0 ? Math.round(hSum / wSum) : null;
+
+  return { reviews, alerts, counts, health, snapshot };
 }

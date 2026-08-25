@@ -10,7 +10,7 @@ import { computeFeedbackAdjustments, isSuppressed, REJECT_REASONS } from '../js/
 import { ASSETS, getAsset } from '../js/core/assets.js';
 import { derivePreferences } from '../js/core/preferences.js';
 import { portfolioSnapshot, mergeLots } from '../js/core/holdings.js';
-import { reviewHolding, reviewPortfolio } from '../js/core/review.js';
+import { reviewHolding, reviewPortfolio, healthScore } from '../js/core/review.js';
 import { generateStrategyOptions } from '../js/core/strategies.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -379,6 +379,40 @@ test('Nunca se vende solo por estar en pérdidas si la tendencia aguanta', () =>
 test('Sin serie analizable el veredicto es «sin datos», no una venta', () => {
   const r = reviewHolding({ position: mkPos({}), asset: { id: 'X', assetClass: 'crypto' }, state: null, capPct: 8, preferences: prefsNeutral });
   assert(r.verdict === 'sin_datos', r.verdict);
+});
+
+test('Sobre datos reales: en el crash del COVID ninguna posición es «mantener»', () => {
+  const bundle = JSON.parse(readFileSync(join(root, 'data/history.json'), 'utf8'));
+  const i = bundle.dates.indexOf('2020-03-23');
+  for (const sym of ['JNJ', 'XOM', 'AAPL']) {
+    const an = new SeriesAnalyzer(bundle.series[sym]);
+    const r = reviewHolding({
+      position: mkPos({ assetId: sym }), asset: getAsset(sym),
+      state: an.stateAt(i), capPct: 8, preferences: prefsNeutral,
+    });
+    assert(r.verdict === 'vender' || r.verdict === 'reducir', `${sym}: ${r.verdict} en pleno crash`);
+  }
+});
+
+test('El índice de salud es 0-100 y ordena bien alcista vs bajista', () => {
+  const up = healthScore(stateOfSeries(upTrend));
+  const down = healthScore(stateOfSeries(downTrend));
+  assert(up >= 0 && up <= 100 && down >= 0 && down <= 100, `${up} / ${down}`);
+  assert(up > down, `alcista ${up} debería puntuar más que bajista ${down}`);
+  assert(healthScore(null) === null);
+});
+
+test('reviewPortfolio resume la salud ponderada por valor de cada posición', () => {
+  const snapshot = portfolioSnapshot(
+    [{ id: 'h1', assetId: 'AAPL', assetClass: 'equity', units: 10, entryPrice: 100 }],
+    () => 100, { capitalBase: 1000 },
+  );
+  const out = reviewPortfolio({
+    snapshot, assetOf: getAsset, stateOf: () => stateOfSeries(upTrend),
+    category: CATEGORIES[1], preferences: prefsNeutral,
+  });
+  assert(out.health != null && out.health >= 0 && out.health <= 100, `salud=${out.health}`);
+  approx(out.health, out.reviews[0].health, 1); // una sola posición → misma salud
 });
 
 test('reviewPortfolio avisa de la deriva frente al objetivo y de la concentración', () => {

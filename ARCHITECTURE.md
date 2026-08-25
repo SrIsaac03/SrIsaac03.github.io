@@ -457,8 +457,14 @@ emite un veredicto explicable — **vender / reducir / mantener / reforzar** —
 > desequilibrio. Vender por miedo a la pérdida es justo el sesgo que el test mide en q1; el motor
 > no debe amplificarlo.
 
+Además del veredicto, cada posición recibe un **índice de salud 0-100** (`healthScore`): un resumen
+continuo y monótono de los mismos factores (régimen, momentum, caída desde máximos, volatilidad,
+sobrecompra) que permite comparar posiciones de un vistazo mediante un medidor visual. Es un
+resumen, no un decisor: quien dicta la acción es el veredicto.
+
 A nivel de cartera se emiten alertas de **deriva** frente al objetivo del día, **concentración por
-clase**, **diversificación insuficiente** y **posiciones de clases que el test desaconseja**.
+clase**, **diversificación insuficiente** y **posiciones de clases que el test desaconseja**, más
+una **salud global** ponderada por el valor de cada posición.
 
 Las ventas que el usuario registra quedan en el historial con `action: 'sold'` y **no alimentan** el
 feedback loop de la etapa 5: vender por ruptura de tendencia no significa que el activo no guste.

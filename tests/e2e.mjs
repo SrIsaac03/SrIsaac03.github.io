@@ -127,6 +127,9 @@ await check('Cartera: registrar una posición y recibir veredicto de tendencia',
   if (!/Vender|Reducir|Mantener|Reforzar|Sin datos/.test(txt)) throw new Error('sin veredicto: ' + txt);
   // valoración y peso sobre el capital
   if (!/% de tu capital/.test(txt)) throw new Error('sin peso sobre el capital');
+  if (!/salud \d+\/100/.test(txt)) throw new Error('sin índice de salud');
+  if (!(await page.locator('.holding .health-meter .hm-fill').count())) throw new Error('sin medidor visual');
+  if (!(await page.locator('text=Salud de la cartera').count())) throw new Error('sin salud global de la cartera');
 });
 
 await check('La cartera persiste al recargar (almacenamiento local)', async () => {

@@ -330,6 +330,14 @@ table.data td.num { font-variant-numeric: tabular-nums; text-align: right; }
 .chip.verdict.reducir { color: #4a3200; background: var(--warning); border-color: var(--warning); }
 .chip.verdict.reforzar { color: var(--good-text); border-color: var(--good); }
 
+/* Medidor de salud técnica del activo (0-100) */
+.health-meter { width: 84px; height: 8px; background: var(--grid); border-radius: 999px; overflow: hidden; flex: none; }
+.hm-fill { height: 100%; border-radius: 999px; transition: width 0.3s; }
+.hm-fill.hm-mantener, .hm-fill.hm-reforzar { background: var(--good); }
+.hm-fill.hm-reducir { background: var(--warning); }
+.hm-fill.hm-vender { background: var(--critical); }
+.hm-fill.hm-sin_datos { background: var(--axis); }
+
 .field {
   width: 100%; font: inherit; padding: 10px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--plane); color: var(--ink); margin: 6px 0;
