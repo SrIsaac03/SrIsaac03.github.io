@@ -21,6 +21,10 @@ const SHELL = [
   './js/core/profile.js',
   './js/core/feedback.js',
   './js/core/store.js',
+  './js/core/preferences.js',
+  './js/core/holdings.js',
+  './js/core/review.js',
+  './js/core/strategies.js',
   './manifest.webmanifest',
 ];
 

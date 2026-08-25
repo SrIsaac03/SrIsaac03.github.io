@@ -9,15 +9,22 @@ financiero personalizado.
 
 ## Características
 
-- **Test psicométrico** de perfil de riesgo (12 ítems) — único método de perfilado.
+- **Test psicométrico** de perfil de riesgo (12 ítems) — único método de perfilado. Se guardan
+  **las respuestas enteras**, no solo la nota: de ellas salen reglas sobre *qué* comprar (techo de
+  volatilidad, preferencia por ETFs, clases descartadas, diversificación mínima). Visibles en Ajustes.
+- **Varias opciones de cartera, no una prefabricada**: cada día el motor propone hasta 4 formas
+  distintas de aplicar tu perfil (Núcleo indexado, Defensiva, Tendencia, Reparto amplio), con su
+  composición, sus contras y su encaje con tu test. Eliges tú; cambiar de opción es gratis.
+- **Cartera local**: registras lo que **ya tienes** (unidades y precio medio) y el motor la valora y
+  analiza la tendencia de cada posición para dictar **vender / reducir / mantener / reforzar**, con
+  un índice de salud 0-100 por activo y alertas de deriva y concentración. Nunca recomienda vender
+  por estar en pérdidas: solo por ruptura de tendencia, riesgo o desequilibrio de la cartera.
+  No-custodial: la app nunca vende, solo registra lo que tú ejecutas en tu plataforma.
 - **Recomendaciones por porcentajes** del capital y de los ingresos, nunca importes fijos.
 - **Semáforo de timing** (invertir / escalonar / esperar en liquidez) validado por backtest.
 - **Filtro por bróker**: solo se recomienda lo que tu plataforma permite contratar, con sus
   comisiones y mínimos reales (catálogo curado: MyInvestor, Trade Republic, DEGIRO, IBKR, Revolut, BBVA).
 - **Máximo 2 portafolios** simultáneos, cada uno con su nivel de riesgo.
-- **Cartera real + evaluación de ventas**: guarda localmente los activos que ya posees; el motor
-  analiza la tendencia de cada uno y dicta **mantener / reducir / vender** con un índice de salud y
-  el porqué. No-custodial: la app nunca vende, solo te muestra los pasos para hacerlo tú.
 - **Feedback loop**: cada aceptación/rechazo (con motivo) reajusta el motor, con decaimiento temporal.
 - **Máquina del tiempo** (`?fecha=2008-09-15`): mira qué habría recomendado el motor en cualquier
   fecha desde 1991 y qué pasó en los 3 meses siguientes.
@@ -30,7 +37,11 @@ financiero personalizado.
 
 - `ARCHITECTURE.md` — documento técnico completo (stack, UX, modelo de datos, motor).
 - `js/core/` — motor puro (indicadores, pipeline de 5 etapas, perfil, brókers, feedback, store).
-  Se ejecuta idéntico en navegador y en Node (tests/backtest).
+  Se ejecuta idéntico en navegador y en Node (tests/backtest). Módulos añadidos:
+  - `preferences.js` — traduce las respuestas del test en reglas sobre qué comprar (etapa 0).
+  - `strategies.js` — genera las opciones de cartera alternativas a partir del mismo pipeline.
+  - `holdings.js` — valoración, plusvalías y pesos de la cartera real del usuario.
+  - `review.js` — etapa 6: veredicto de venta/mantenimiento por posición y alertas de cartera.
 - `js/data/providers.js` — proveedores de datos con timeout y fallback.
 - `backtest/` — backtesting y afinado de parámetros con validación fuera de muestra.
 
@@ -38,7 +49,7 @@ financiero personalizado.
 
 ```bash
 node tools/build-data.mjs     # regenerar data/history.json desde los CSV
-node tests/run.mjs            # suite de tests unitarios (36 tests)
+node tests/run.mjs            # suite de tests unitarios (74 tests)
 node backtest/tune.mjs        # búsqueda en rejilla de parámetros (train 1991-2010)
 node backtest/backtest.mjs    # informe completo → backtest/REPORT.md
 python3 -m http.server 8321   # servir la app en local

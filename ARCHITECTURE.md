@@ -263,6 +263,26 @@ AcceptedRecommendation(
   executed_confirmed BOOLEAN    -- el usuario confirmó que operó (opcional)
 )
 
+-- Cartera REAL del usuario (posiciones que ya posee; en local: `holdings`)
+Holding(
+  id UUID PK,
+  portfolio_id UUID FK -> Portfolio,
+  asset_id UUID FK -> Asset,
+  units NUMERIC,                -- participaciones/acciones
+  entry_price NUMERIC,          -- precio medio de compra EN LA DIVISA DEL ACTIVO
+  currency TEXT,
+  added_at TIMESTAMPTZ,
+  UNIQUE (portfolio_id, asset_id)  -- una segunda compra promedia, no duplica línea
+)
+
+-- Opción de cartera elegida por el usuario (una por portafolio)
+StrategyChoice(
+  portfolio_id UUID PK FK -> Portfolio,
+  strategy_id TEXT,             -- nucleo|defensiva|tendencia|reparto
+  target_equity_pct NUMERIC,    -- objetivo del día al elegirla (para medir deriva)
+  chosen_at TIMESTAMPTZ
+)
+
 -- Historial de RECHAZADAS (clave para el reentrenamiento)
 RejectedRecommendation(
   id UUID PK,
@@ -383,6 +403,71 @@ Ajusta las recomendaciones con el historial del usuario:
   ordena candidatos por probabilidad de aceptación **útil**. Cuidado con el sesgo:
   optimizar "aceptación" no es lo mismo que optimizar "buen consejo" — hay que
   ponderar con resultados reales, no solo con que al usuario le guste.
+
+### Etapa 0 — Preferences (qué comprar, a partir de las respuestas del test)
+
+El `risk_score` dice *cuánto* riesgo tolera el usuario, pero no *qué* activos le encajan. Por eso
+las respuestas del test se guardan íntegras (`RiskProfile.answers` / `profile.answers` en local) y
+`js/core/preferences.js` las traduce en reglas explícitas, cada una con la pregunta que la provoca:
+
+| Señal del test | Regla derivada |
+|---|---|
+| q10 «necesitaré el dinero en 3 años» | horizonte corto → excluye cripto, techo de volatilidad 18% |
+| q11 + q6 (conocimiento y experiencia bajos) | prefiere ETFs sobre acciones sueltas; excluye cripto |
+| q4 + q1 (ansiedad y venta en pánico) | baja el techo de volatilidad y el tamaño máximo por posición |
+| q8 + q7 (sin colchón / ingresos inestables) | reduce el tamaño de cada posición un 30% |
+| q9 + q12 (aguantó las caídas) | permite promediar en desplomes en vez de vender (etapa 6) |
+
+Las **exclusiones son duras** (nunca se propone esa clase de activo) y se muestran al usuario en
+Ajustes; el resto son preferencias blandas que puntúan el encaje de cada opción de cartera.
+
+### Etapa 2b — Options (varias carteras, no una prefabricada)
+
+`js/core/strategies.js` no devuelve una cartera: devuelve hasta **4 opciones coherentes y
+distintas** construidas sobre el mismo ranking, el mismo semáforo y el mismo filtro de bróker —
+*Núcleo indexado*, *Defensiva*, *Tendencia* y *Reparto amplio*. Cada una declara su composición,
+su volatilidad media, su coste estimado, sus **contras** y su encaje con el test (0-100). Se ordenan
+por encaje y se marca la mejor, pero **elige el usuario**: la elección se guarda por portafolio.
+
+Invariantes garantizados por tests para toda opción:
+- el objetivo de renta variable cae siempre dentro de la banda del perfil (`tiltAdj` ∈ ±0,25 sobre
+  el punto que fija el semáforo, luego se acota a la banda);
+- ninguna posición supera el tope de concentración del perfil (el ETF indexado tiene un tope
+  triple: ya diversifica por dentro);
+- si el tope de concentración impide desplegar la banda entera, la opción **crece en número de
+  posiciones**, y si aun así no llega, lo declara como contra y deja el resto en liquidez.
+
+### Etapa 6 — Review (revisión de la cartera real y decisiones de venta)
+
+Las posiciones que el usuario ya tiene se guardan en su dispositivo (`holdings`: activo, unidades,
+precio medio, divisa). `js/core/review.js` cruza cada posición con la tendencia actual del activo y
+emite un veredicto explicable — **vender / reducir / mantener / reforzar** — por este orden:
+
+1. **Ruptura de tendencia** (precio bajo la SMA200 y momentum 12m negativo) → vender.
+   Excepción: si el usuario declaró en el test que aguanta las caídas y el activo está en sobreventa
+   profunda, se mantiene y se sugiere promediar.
+2. **Stop de riesgo**: caída > 25% desde máximos sin recuperar tendencia → reducir a la mitad.
+3. **Volatilidad** por encima del extremo del motor o del techo que sale del test → reducir.
+4. **Concentración** por encima de 1,5× el tope del perfil → reducir al tope.
+5. **Toma de beneficios**: solo con tendencia alcista, RSI > 78, ganancia > 30% *y* exceso de peso.
+6. **Refuerzo**: tendencia alcista, momentum positivo y peso muy por debajo del tope.
+
+> **Regla de diseño:** nunca se vende por estar en pérdidas. La pérdida latente se muestra como
+> información al confirmar la venta, pero el disparador es siempre la tendencia, el riesgo o el
+> desequilibrio. Vender por miedo a la pérdida es justo el sesgo que el test mide en q1; el motor
+> no debe amplificarlo.
+
+Además del veredicto, cada posición recibe un **índice de salud 0-100** (`healthScore`): un resumen
+continuo y monótono de los mismos factores (régimen, momentum, caída desde máximos, volatilidad,
+sobrecompra) que permite comparar posiciones de un vistazo mediante un medidor visual. Es un
+resumen, no un decisor: quien dicta la acción es el veredicto.
+
+A nivel de cartera se emiten alertas de **deriva** frente al objetivo del día, **concentración por
+clase**, **diversificación insuficiente** y **posiciones de clases que el test desaconseja**, más
+una **salud global** ponderada por el valor de cada posición.
+
+Las ventas que el usuario registra quedan en el historial con `action: 'sold'` y **no alimentan** el
+feedback loop de la etapa 5: vender por ruptura de tendencia no significa que el activo no guste.
 
 ### Explicabilidad (transversal)
 

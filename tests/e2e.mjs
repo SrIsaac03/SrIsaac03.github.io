@@ -70,7 +70,22 @@ await check('Porcentajes (nunca importes fijos) en la asignación', async () => 
   if (!/%/.test(txt)) throw new Error('sin %');
 });
 
-await check('Recomendaciones con botón de compra y comprobación del futuro', async () => {
+await check('Se ofrecen VARIAS opciones de cartera, no una prefabricada', async () => {
+  await page.waitForSelector('.strat', { timeout: 5000 });
+  const n = await page.locator('.strat').count();
+  if (n < 2) throw new Error(`solo ${n} opción`);
+  // cada opción muestra su composición y sus contras antes de elegirla
+  if (await page.locator('.strat .stack').count() !== n) throw new Error('falta la barra de composición');
+  if (!(await page.locator('.strat').first().innerText()).match(/%/)) throw new Error('sin porcentajes');
+  if (await page.locator('[data-choose]').count() !== n) throw new Error('opciones no elegibles');
+  if (!(await page.locator('text=Mejor encaje con tu test').count())) throw new Error('sin marca de encaje con el test');
+  // sin elegir no hay órdenes: la app no impone una cartera
+  if (await page.locator('[data-acc]').count()) throw new Error('hay órdenes antes de elegir opción');
+});
+
+await check('Al elegir una opción aparecen sus órdenes concretas', async () => {
+  await page.locator('[data-choose]').first().click();
+  await page.waitForSelector('.strat.chosen', { timeout: 3000 });
   await page.waitForSelector('.rec', { timeout: 5000 });
   await page.waitForSelector('[data-acc]');
   await page.waitForSelector('text=Comprobación:');
@@ -99,8 +114,33 @@ await check('Historial registra ambas decisiones con motivo', async () => {
   await page.waitForSelector('text=Demasiado riesgo');
 });
 
+await check('Cartera: registrar una posición y recibir veredicto de tendencia', async () => {
+  await page.locator('nav.tabs button:has-text("Cartera")').click();
+  await page.waitForSelector('#hAsset');
+  await page.selectOption('#hAsset', 'KO');
+  await page.fill('#hUnits', '20');
+  await page.fill('#hPrice', '40');
+  await page.click('#hAdd');
+  await page.waitForSelector('.holding', { timeout: 5000 });
+  const txt = await page.locator('.holding').first().innerText();
+  if (!/Coca-Cola/.test(txt)) throw new Error('la posición no aparece');
+  if (!/Vender|Reducir|Mantener|Reforzar|Sin datos/.test(txt)) throw new Error('sin veredicto: ' + txt);
+  // valoración y peso sobre el capital
+  if (!/% de tu capital/.test(txt)) throw new Error('sin peso sobre el capital');
+  if (!/salud \d+\/100/.test(txt)) throw new Error('sin índice de salud');
+  if (!(await page.locator('.holding .health-meter .hm-fill').count())) throw new Error('sin medidor visual');
+  if (!(await page.locator('text=Salud de la cartera').count())) throw new Error('sin salud global de la cartera');
+});
+
+await check('La cartera persiste al recargar (almacenamiento local)', async () => {
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.locator('nav.tabs button:has-text("Cartera")').click();
+  await page.waitForSelector('.holding', { timeout: 10000 });
+  if (!/Coca-Cola/.test(await page.locator('.holding').first().innerText())) throw new Error('se perdió la posición');
+});
+
 await check('Portafolios: crear el 2º funciona, el 3º está bloqueado', async () => {
-  await page.locator('nav.tabs button:has-text("Portafolios")').click();
+  await page.locator('nav.tabs button:has-text("Cartera")').click();
   await page.waitForSelector('#npfname');
   await page.fill('#npfname', 'Especulativa');
   await page.locator('#npfrisk .opt[data-id="agresivo"]').click();
@@ -121,10 +161,10 @@ await check('Dos carteras con riesgos distintos → asignaciones distintas', asy
 });
 
 // --- Modo rojo: fin de 2022 (bajista) ---
-await check('Semáforo rojo (2022): candidatos en vigilancia, sin botón de compra', async () => {
+await check('Semáforo rojo (2022): planes en vigilancia, sin botón de compra', async () => {
   await page.goto(BASE + '?fecha=2022-12-28', { waitUntil: 'networkidle' });
   await page.waitForSelector('.semaforo.red', { timeout: 15000 });
-  await page.waitForSelector('text=Candidatos en vigilancia');
+  await page.waitForSelector('text=Planes en vigilancia');
   const accBtns = await page.locator('[data-acc]').count();
   if (accBtns > 0) throw new Error('hay botones de compra con semáforo rojo');
   await page.waitForSelector('text=objetivo'); // % objetivo, no % del capital
