@@ -8,6 +8,10 @@ import { scoreTest, QUESTIONS, CATEGORIES } from '../js/core/profile.js';
 import { BROKERS, getBroker, brokerTerms } from '../js/core/brokers.js';
 import { computeFeedbackAdjustments, isSuppressed, REJECT_REASONS } from '../js/core/feedback.js';
 import { ASSETS, getAsset } from '../js/core/assets.js';
+import { derivePreferences } from '../js/core/preferences.js';
+import { portfolioSnapshot, mergeLots } from '../js/core/holdings.js';
+import { reviewHolding, reviewPortfolio } from '../js/core/review.js';
+import { generateStrategyOptions } from '../js/core/strategies.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let passed = 0, failed = 0;
@@ -249,6 +253,266 @@ test('Cada portafolio ocupa un slot 1|2 único', async () => {
   const { listPortfolios } = await import('../js/core/store.js');
   const slots = listPortfolios().map(p => p.slot).sort();
   assert(JSON.stringify(slots) === '[1,2]', JSON.stringify(slots));
+});
+
+console.log('— Preferencias derivadas de las respuestas del test —');
+
+test('Necesitar el dinero en 3 años descarta la cripto y baja el techo de volatilidad', () => {
+  const answers = {}; for (const q of QUESTIONS) answers[q.id] = 2;
+  answers.q10 = 4; // "necesitaré el dinero en los próximos 3 años"
+  const p = derivePreferences(answers);
+  assert(p.horizon === 'corto', p.horizon);
+  assert(p.excludeClasses.includes('crypto'), 'debería excluir cripto');
+  assert(p.volCap <= 0.18, `volCap=${p.volCap}`);
+  assert(p.notes.some(n => n.from === 'q10'), 'debe explicar por qué');
+});
+
+test('Perfil ansioso y sin experiencia prefiere ETFs y limita volatilidad', () => {
+  const answers = {}; for (const q of QUESTIONS) answers[q.id] = 2;
+  answers.q4 = 4; answers.q1 = 4; answers.q11 = 0; answers.q6 = 0;
+  const p = derivePreferences(answers);
+  assert(p.preferDiversified, 'debería preferir diversificado');
+  assert(p.volCap <= 0.22, `volCap=${p.volCap}`);
+  assert(p.tilt === 'defensivo', p.tilt);
+});
+
+test('Perfil experimentado y contrarian no excluye clases y permite promediar', () => {
+  const answers = {}; for (const q of QUESTIONS) answers[q.id] = 4;
+  answers.q1 = 0; answers.q4 = 0; answers.q5 = 0; answers.q10 = 0; // invertidas al mínimo
+  const p = derivePreferences(answers);
+  assert(p.excludeClasses.length === 0, JSON.stringify(p.excludeClasses));
+  assert(p.allowContrarianDCA, 'debería permitir DCA contrarian');
+  assert(p.tilt === 'crecimiento', p.tilt);
+});
+
+test('Sin respuestas guardadas devuelve preferencias neutras sin romperse', () => {
+  const p = derivePreferences(undefined);
+  assert(p.tilt && p.volCap > 0 && Array.isArray(p.excludeClasses));
+});
+
+console.log('— Cartera local: valoración y pesos —');
+
+test('portfolioSnapshot calcula coste, valor, plusvalía y pesos', () => {
+  const holdings = [
+    { id: 'h1', assetId: 'AAPL', assetClass: 'equity', units: 10, entryPrice: 100 },
+    { id: 'h2', assetId: 'KO', assetClass: 'equity', units: 20, entryPrice: 50 },
+  ];
+  const prices = { h1: 150, h2: 50 };
+  const s = portfolioSnapshot(holdings, h => prices[h.id], { capitalBase: 4000 });
+  approx(s.totalCost, 2000);
+  approx(s.totalValue, 2500);
+  approx(s.pnl, 500);
+  approx(s.pnlPct, 0.25);
+  const aapl = s.positions.find(p => p.assetId === 'AAPL');
+  approx(aapl.pnlPct, 0.5);
+  approx(aapl.weightPct, 60);          // 1500 de 2500
+  approx(aapl.capitalPct, 37.5);       // 1500 de 4000 de capital
+  approx(s.investedPct, 62.5);
+  approx(s.liquidityPct, 37.5);
+});
+
+test('Una posición sin precio se valora a coste y marca la cartera como incompleta', () => {
+  const s = portfolioSnapshot(
+    [{ id: 'h1', assetId: 'X', assetClass: 'etf', units: 5, entryPrice: 20 }],
+    () => null, { capitalBase: 1000 },
+  );
+  assert(s.stale, 'debería marcarse stale');
+  approx(s.totalValue, 100);
+  assert(s.positions[0].pnl === null, 'sin precio no hay plusvalía inventada');
+});
+
+test('mergeLots promedia el precio de compra ponderando por unidades', () => {
+  const m = mergeLots({ units: 10, entryPrice: 100 }, 10, 200);
+  approx(m.units, 20); approx(m.entryPrice, 150);
+});
+
+console.log('— Revisión de cartera: cuándo vender —');
+
+const upTrend = Array.from({ length: 600 }, (_, i) => 100 * Math.pow(1.0008, i));
+const downTrend = Array.from({ length: 600 }, (_, i) =>
+  i < 250 ? 100 * Math.pow(1.001, i) : 100 * Math.pow(1.001, 250) * Math.pow(0.9975, i - 250));
+const stateOfSeries = (vals) => {
+  const an = new SeriesAnalyzer(vals);
+  return an.stateAt(vals.length - 1);
+};
+const prefsNeutral = derivePreferences(Object.fromEntries(QUESTIONS.map(q => [q.id, 2])));
+const mkPos = (over) => ({ assetId: 'X', units: 10, entryPrice: 100, capitalPct: 5, pnlPct: 0.1, ...over });
+
+test('Ruptura de tendencia (bajista + momentum negativo) → vender', () => {
+  const r = reviewHolding({
+    position: mkPos({}), asset: { id: 'X', assetClass: 'equity' },
+    state: stateOfSeries(downTrend), capPct: 8, preferences: prefsNeutral,
+  });
+  assert(r.verdict === 'vender', r.verdict);
+  assert(r.targetPct === 0, `${r.targetPct}`);
+  assert(r.reasons.some(x => /media de 200|momentum/i.test(x)), r.reasons.join(' | '));
+});
+
+test('El contrarian declarado en el test aguanta la caída profunda en vez de vender', () => {
+  const contrarian = { ...prefsNeutral, allowContrarianDCA: true };
+  const state = stateOfSeries(downTrend);
+  // solo aplica si de verdad hay sobreventa y caída profunda
+  if (state.drawdown < DEFAULT_PARAMS.ddDeep && state.rsi < DEFAULT_PARAMS.rsiOversold) {
+    const r = reviewHolding({ position: mkPos({}), asset: { id: 'X', assetClass: 'equity' }, state, capPct: 8, preferences: contrarian });
+    assert(r.verdict !== 'vender', `${r.verdict}: el contrarian no debería vender en sobreventa profunda`);
+  }
+});
+
+test('Tendencia alcista con poco peso → reforzar; con exceso de peso → reducir', () => {
+  const state = stateOfSeries(upTrend);
+  const small = reviewHolding({ position: mkPos({ capitalPct: 2 }), asset: { id: 'X', assetClass: 'equity' }, state, capPct: 8, preferences: prefsNeutral });
+  assert(small.verdict === 'reforzar', small.verdict);
+  const big = reviewHolding({ position: mkPos({ capitalPct: 30 }), asset: { id: 'X', assetClass: 'equity' }, state, capPct: 8, preferences: prefsNeutral });
+  assert(big.verdict === 'reducir', big.verdict);
+  approx(big.targetPct, 8);
+  assert(big.reasons.some(x => /Concentración/.test(x)), big.reasons.join(' | '));
+});
+
+test('Nunca se vende solo por estar en pérdidas si la tendencia aguanta', () => {
+  const r = reviewHolding({
+    position: mkPos({ pnlPct: -0.35 }), asset: { id: 'X', assetClass: 'equity' },
+    state: stateOfSeries(upTrend), capPct: 8, preferences: prefsNeutral,
+  });
+  assert(r.verdict !== 'vender' && r.verdict !== 'reducir', r.verdict);
+});
+
+test('Sin serie analizable el veredicto es «sin datos», no una venta', () => {
+  const r = reviewHolding({ position: mkPos({}), asset: { id: 'X', assetClass: 'crypto' }, state: null, capPct: 8, preferences: prefsNeutral });
+  assert(r.verdict === 'sin_datos', r.verdict);
+});
+
+test('reviewPortfolio avisa de la deriva frente al objetivo y de la concentración', () => {
+  const snapshot = portfolioSnapshot(
+    [{ id: 'h1', assetId: 'AAPL', assetClass: 'equity', units: 10, entryPrice: 100 }],
+    () => 100, { capitalBase: 1000 },
+  );
+  const out = reviewPortfolio({
+    snapshot, assetOf: getAsset, stateOf: () => stateOfSeries(upTrend),
+    category: CATEGORIES[1], preferences: prefsNeutral, targetEquityPct: 40,
+  });
+  assert(out.alerts.some(a => /invertido/.test(a.text)), JSON.stringify(out.alerts));
+  assert(out.reviews.length === 1);
+  assert(out.counts && typeof out.counts === 'object');
+});
+
+console.log('— Opciones de cartera (varias, no una prefabricada) —');
+
+test('generateStrategyOptions ofrece varias opciones distintas y todas dentro del perfil', () => {
+  const bundle = JSON.parse(readFileSync(join(root, 'data/history.json'), 'utf8'));
+  const analyzers = new Map();
+  const seriesFor = (a) => {
+    if (!analyzers.has(a.id)) analyzers.set(a.id, bundle.series[a.series] ? new SeriesAnalyzer(bundle.series[a.series]) : null);
+    return analyzers.get(a.id);
+  };
+  const idx = new SeriesAnalyzer(bundle.series.SP500);
+  const i = bundle.dates.indexOf('2021-06-01');
+  const category = CATEGORIES[2]; // dinámico
+  const out = generateStrategyOptions({
+    assets: ASSETS, seriesFor, dateIndex: i, indexAnalyzer: idx,
+    profile: { score: 60, category },
+    capitalMid: 20000, incomeMid: 3000,
+    broker: getBroker('traderepublic'), history: [],
+    preferences: derivePreferences(Object.fromEntries(QUESTIONS.map(q => [q.id, 2]))),
+    now: Date.parse('2021-06-01'),
+  });
+  assert(out.strategies.length >= 2, `solo ${out.strategies.length} opciones`);
+  const fingerprints = new Set(out.strategies.map(s => s.positions.map(p => p.assetId).join(',')));
+  assert(fingerprints.size === out.strategies.length, 'las opciones deben ser distintas entre sí');
+  for (const s of out.strategies) {
+    assert(s.positions.length >= 2, `${s.id} tiene ${s.positions.length} posiciones`);
+    // el objetivo del día siempre cae dentro de la banda del perfil
+    assert(s.targetEquityPct <= category.equityRange[1] && s.targetEquityPct >= category.equityRange[0],
+      `${s.id}: objetivo ${s.targetEquityPct}% fuera de la banda`);
+    // y lo desplegado nunca supera ese objetivo (lo que falte queda en liquidez)
+    assert(s.equityPct <= s.targetEquityPct + 0.5, `${s.id}: despliega ${s.equityPct}% sobre un objetivo de ${s.targetEquityPct}%`);
+    if (s.underDeployed) assert(s.cons.some(c => /liquidez/.test(c)), `${s.id}: debe explicar por qué no llega al objetivo`);
+    for (const p of s.positions) {
+      const cap = p.assetId === 'SP500' ? category.maxPosPct * 3 : category.maxPosPct;
+      assert(p.pct <= cap + 0.5, `${s.id}: ${p.assetId} pesa ${p.pct}%, sobre el tope ${cap}%`);
+    }
+    const total = s.positions.reduce((x, p) => x + p.pct, 0);
+    approx(total, s.equityPct, 0.51, `${s.id}: las posiciones (${total}) no suman la renta variable (${s.equityPct})`);
+    assert(s.fit && s.fit.score >= 0 && s.fit.score <= 100, `${s.id}: fit inválido`);
+    assert(s.pros.length && s.cons.length, `${s.id} debe declarar sus contras`);
+  }
+  assert(out.strategies.some(s => s.bestFit), 'debe marcarse el mejor encaje');
+  assert(out.strategies[0].fit.score >= out.strategies[out.strategies.length - 1].fit.score, 'ordenadas por encaje');
+});
+
+test('Las exclusiones del test se aplican a todas las opciones', () => {
+  const bundle = JSON.parse(readFileSync(join(root, 'data/history.json'), 'utf8'));
+  const analyzers = new Map();
+  const seriesFor = (a) => {
+    if (!analyzers.has(a.id)) analyzers.set(a.id, bundle.series[a.series] ? new SeriesAnalyzer(bundle.series[a.series]) : null);
+    return analyzers.get(a.id);
+  };
+  const answers = Object.fromEntries(QUESTIONS.map(q => [q.id, 2]));
+  answers.q10 = 4; // horizonte corto → sin cripto
+  const prefs = derivePreferences(answers);
+  const out = generateStrategyOptions({
+    assets: ASSETS, seriesFor, dateIndex: bundle.dates.indexOf('2021-06-01'),
+    indexAnalyzer: new SeriesAnalyzer(bundle.series.SP500),
+    profile: { score: 60, category: CATEGORIES[2] },
+    capitalMid: 20000, incomeMid: 3000,
+    broker: getBroker('traderepublic'), history: [],
+    preferences: prefs, now: Date.parse('2021-06-01'),
+  });
+  for (const s of out.strategies) {
+    for (const p of s.positions) {
+      assert(p.assetClass !== 'crypto', `${s.id} propone cripto pese a la exclusión del test`);
+    }
+  }
+});
+
+console.log('— Cartera en el almacén local —');
+
+test('addHolding promedia una segunda compra del mismo activo', async () => {
+  const st = await import('../js/core/store.js');
+  const pf = st.listPortfolios()[0];
+  st.addHolding({ portfolioId: pf.id, assetId: 'AAPL', assetClass: 'equity', currency: 'USD', units: 10, entryPrice: 100 });
+  st.addHolding({ portfolioId: pf.id, assetId: 'AAPL', assetClass: 'equity', currency: 'USD', units: 10, entryPrice: 200 });
+  const hs = st.listHoldings(pf.id);
+  assert(hs.length === 1, `${hs.length} líneas: debería promediar en una`);
+  approx(hs[0].units, 20); approx(hs[0].entryPrice, 150);
+});
+
+test('addHolding rechaza unidades o precios no positivos', async () => {
+  const st = await import('../js/core/store.js');
+  const pf = st.listPortfolios()[0];
+  let threw = 0;
+  try { st.addHolding({ portfolioId: pf.id, assetId: 'KO', units: 0, entryPrice: 10 }); } catch { threw++; }
+  try { st.addHolding({ portfolioId: pf.id, assetId: 'KO', units: 1, entryPrice: -5 }); } catch { threw++; }
+  assert(threw === 2, `${threw} errores de 2`);
+});
+
+test('recordSale descuenta unidades, anota el historial y cierra la posición al vender todo', async () => {
+  const st = await import('../js/core/store.js');
+  const pf = st.listPortfolios()[0];
+  const h = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
+  st.recordSale({ id: h.id, unitsSold: 5, price: 180, verdict: 'reducir' });
+  approx(st.listHoldings(pf.id).find(x => x.assetId === 'AAPL').units, 15);
+  const sales = st.listDecisions().filter(d => d.action === 'sold');
+  assert(sales.length === 1 && sales[0].units === 5, JSON.stringify(sales));
+  st.recordSale({ id: h.id, unitsSold: 999 });
+  assert(!st.listHoldings(pf.id).some(x => x.assetId === 'AAPL'), 'vender todo debe cerrar la posición');
+});
+
+test('Las ventas registradas NO penalizan al activo en el motor de feedback', () => {
+  const now = Date.now();
+  const adj = computeFeedbackAdjustments([{ assetId: 'AAPL', assetClass: 'equity', action: 'sold', ts: now }], now);
+  assert(!adj.assetAdj.has('AAPL') || adj.assetAdj.get('AAPL') === 0, 'una venta por tendencia no es un rechazo');
+  const rejected = computeFeedbackAdjustments([{ assetId: 'AAPL', assetClass: 'equity', action: 'rejected', reasonId: 'asset', ts: now }], now);
+  assert(rejected.assetAdj.get('AAPL') < 0, 'un rechazo explícito sí penaliza');
+});
+
+test('La opción elegida se recuerda por portafolio', async () => {
+  const st = await import('../js/core/store.js');
+  const pf = st.listPortfolios()[0];
+  st.saveStrategyChoice(pf.id, 'nucleo', { name: 'Núcleo indexado', equityPct: 40 });
+  assert(st.getStrategyChoice(pf.id).strategyId === 'nucleo');
+  approx(st.getStrategyChoice(pf.id).equityPct, 40);
+  st.clearStrategyChoice(pf.id);
+  assert(st.getStrategyChoice(pf.id) === null);
 });
 
 console.log('— Pipeline end-to-end sobre datos reales —');

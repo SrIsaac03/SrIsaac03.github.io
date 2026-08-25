@@ -32,6 +32,10 @@ export function computeFeedbackAdjustments(history, now = Date.now()) {
       assetAdj.set(h.assetId, (assetAdj.get(h.assetId) || 0) + 0.05 * w);
       continue;
     }
+    // Solo los rechazos explícitos entrenan el motor. Otras anotaciones del
+    // historial (p. ej. ventas registradas en la cartera) son trazabilidad:
+    // vender por ruptura de tendencia no significa que el activo no te guste.
+    if (h.action !== 'rejected') continue;
     const reason = REJECT_REASONS.find(r => r.id === h.reasonId) || REJECT_REASONS[6];
     switch (reason.scope) {
       case 'asset':
