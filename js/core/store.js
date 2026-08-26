@@ -2,7 +2,7 @@
 // TODOS los datos del usuario viven en su dispositivo: perfil, portafolios,
 // historial de recomendaciones aceptadas/rechazadas.
 
-import { normalizeHolding, mergeLots, positionSnapshot } from './holdings.js';
+import { normalizeHolding, positionSnapshot } from './holdings.js';
 
 const KEY = 'copiloto.v1';
 export const MAX_PORTFOLIOS = 2;
@@ -98,41 +98,77 @@ export function listHoldings(portfolioId) {
 
 // Si el activo ya está en cartera, suma la aportación en lugar de duplicar la
 // línea (es lo que hace cualquier bróker con una segunda compra).
-export function addHolding({ portfolioId, assetId, assetClass, currency, invested, units = 0, value = null }) {
+// `at` permite registrar una aportación con su fecha real (puedes dar de alta
+// hoy algo que compraste en 2020). Sin las fechas correctas, la TIR miente.
+export function addHolding({ portfolioId, assetId, assetClass, currency, invested, units = 0, value = null, at = null }) {
   const s = getState();
   const amount = Number(invested), u = Number(units) || 0;
   if (!(amount > 0)) throw new Error('El importe invertido debe ser mayor que cero');
   if (u < 0) throw new Error('Las unidades no pueden ser negativas');
   const now = Date.now();
+  const ts = at != null && Number.isFinite(Number(at)) ? Math.min(Number(at), now) : now;
+
   const raw = s.holdings.find(h => h.portfolioId === portfolioId && h.assetId === assetId);
   if (raw) {
-    const merged = mergeLots(raw, amount, u);
-    Object.assign(raw, normalizeHolding(raw), merged, { updatedAt: now });
-    if (value != null && Number(value) > 0) raw.valuations.push({ ts: now, value: Number(value) });
+    Object.assign(raw, normalizeHolding(raw));
+    raw.contributions.push({ ts, amount });
+    raw.contributions.sort((a, b) => a.ts - b.ts);
+    raw.invested += amount;
+    raw.units += u;
+    raw.addedAt = Math.min(raw.addedAt || ts, ts);
+    raw.updatedAt = now;
+    if (value != null && Number(value) > 0) applyValuation(raw, Number(value), ts);
     save(s);
     return raw;
   }
   const holding = {
     id: 'h_' + Math.random().toString(36).slice(2, 10),
     portfolioId, assetId, assetClass, currency: currency || 'EUR',
+    contributions: [{ ts, amount }],
     invested: amount, units: u,
-    valuations: value != null && Number(value) > 0 ? [{ ts: now, value: Number(value) }] : [],
-    addedAt: now,
+    valuations: value != null && Number(value) > 0 ? [{ ts, value: Number(value) }] : [],
+    addedAt: ts,
   };
   s.holdings.push(holding);
   save(s);
   return holding;
 }
 
+// Una valoración por día: reanotar el mismo día corrige, no acumula ruido.
+function applyValuation(holding, value, ts) {
+  const day = new Date(ts).toISOString().slice(0, 10);
+  const sameDay = holding.valuations.find(x => new Date(x.ts).toISOString().slice(0, 10) === day);
+  if (sameDay) { sameDay.ts = ts; sameDay.value = value; }
+  else holding.valuations.push({ ts, value });
+  holding.valuations.sort((a, b) => a.ts - b.ts);
+}
+
+// Corregir el importe total ajusta la ÚLTIMA aportación (es lo que se suele
+// haber tecleado mal); si la diferencia no cabe en ella, se reparte a prorrata
+// entre todas para no inventar fechas que el usuario no ha dado.
 export function updateHolding(id, patch) {
   const s = getState();
   const raw = s.holdings.find(x => x.id === id);
   if (!raw) return null;
   Object.assign(raw, normalizeHolding(raw));
-  if (patch.invested != null) raw.invested = Number(patch.invested);
+
+  if (patch.invested != null) {
+    const target = Number(patch.invested);
+    if (!(target > 0)) return removeHolding(id);
+    const delta = target - raw.invested;
+    const last = raw.contributions[raw.contributions.length - 1];
+    if (last && last.amount + delta > 0) {
+      last.amount += delta;
+    } else if (raw.invested > 0) {
+      const k = target / raw.invested;
+      raw.contributions = raw.contributions.map(c => ({ ...c, amount: c.amount * k }));
+    } else {
+      raw.contributions = [{ ts: raw.addedAt || Date.now(), amount: target }];
+    }
+    raw.invested = raw.contributions.reduce((s2, c) => s2 + c.amount, 0);
+  }
   if (patch.units != null) raw.units = Number(patch.units);
   raw.updatedAt = Date.now();
-  if (!(raw.invested > 0)) return removeHolding(id);
   save(s);
   return raw;
 }
@@ -147,12 +183,7 @@ export function revalueHolding(id, value, ts = Date.now()) {
   const v = Number(value);
   if (!(v >= 0)) throw new Error('El valor actual no puede ser negativo');
   Object.assign(raw, normalizeHolding(raw));
-  const day = new Date(ts).toISOString().slice(0, 10);
-  // una valoración por día: reanotar hoy corrige, no acumula ruido
-  const sameDay = raw.valuations.find(x => new Date(x.ts).toISOString().slice(0, 10) === day);
-  if (sameDay) { sameDay.ts = ts; sameDay.value = v; }
-  else raw.valuations.push({ ts, value: v });
-  raw.valuations.sort((a, b) => a.ts - b.ts);
+  applyValuation(raw, v, ts);
   raw.updatedAt = ts;
   save(s);
   return raw;
@@ -203,11 +234,15 @@ export function recordSale({ id, amount, verdict }) {
     save(s);
     return null;
   }
-  // se retira la parte vendida del coste, de las unidades y del valor anotado
-  raw.invested *= 1 - fraction;
+  // La venta es una RETIRADA fechada: entra como flujo negativo para que la TIR
+  // sepa que ese dinero salió, y cuándo. Las unidades y el valor anotado se
+  // reducen en la misma proporción.
+  const now = Date.now();
+  raw.contributions.push({ ts: now, amount: -sold });
+  raw.invested = raw.contributions.reduce((s2, c) => s2 + c.amount, 0);
   raw.units *= 1 - fraction;
   raw.valuations = raw.valuations.map(v => ({ ...v, value: v.value * (1 - fraction) }));
-  raw.updatedAt = Date.now();
+  raw.updatedAt = now;
   save(s);
   return raw;
 }

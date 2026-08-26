@@ -10,6 +10,7 @@ import { SeriesAnalyzer, generateRecommendations, timingSignal, DEFAULT_PARAMS }
 import { generateStrategyOptions } from './core/strategies.js';
 import { derivePreferences } from './core/preferences.js';
 import { portfolioSnapshot, valuationHistory } from './core/holdings.js';
+import { contributionBreakdown } from './core/returns.js';
 import { reviewPortfolio, VERDICTS } from './core/review.js';
 import * as store from './core/store.js';
 import { bootstrapMarketData } from './data/providers.js';
@@ -863,7 +864,8 @@ function viewCartera() {
       ${snap.positions.length ? `
         <div class="tiles" role="list" style="margin-top:12px">
           <div class="tile" role="listitem"><div class="k">Valor actual</div><div class="v">${fmtEur0.format(snap.totalValue)}</div><div class="k">invertido ${fmtEur0.format(snap.totalCost)}</div></div>
-          <div class="tile" role="listitem"><div class="k">Ganancia / pérdida</div><div class="v" style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur0.format(snap.pnl)}</div><div class="k">${fmtPct(snap.pnlPct)}${snap.annualizedPct != null ? ` · ${fmtPct(snap.annualizedPct)} anual` : ''}</div></div>
+          <div class="tile" role="listitem"><div class="k">Ganancia / pérdida</div><div class="v" style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur0.format(snap.pnl)}</div><div class="k">${fmtPct(snap.pnlPct)} sobre lo aportado</div></div>
+          ${snap.irr != null ? `<div class="tile" role="listitem"><div class="k">Rentabilidad anual (TIR)</div><div class="v" style="color:${pnlColor(snap.irr)}">${fmtPct(snap.irr)}</div><div class="k">tu dinero, ${snap.avgYears != null ? `${snap.avgYears.toFixed(1)} años de media` : ''}</div></div>` : ''}
           <div class="tile" role="listitem"><div class="k">Capital invertido</div><div class="v">${Math.round(snap.investedPct)}%</div><div class="k">${choice ? `objetivo ${choice.equityPct}%` : 'elige un plan en Hoy'}</div></div>
           ${rv.health != null ? `<div class="tile" role="listitem"><div class="k">Salud de la cartera</div><div class="v">${rv.health}<span class="small muted" style="font-weight:400">/100</span></div><div class="k">media ponderada por valor</div></div>` : ''}
         </div>
@@ -879,6 +881,45 @@ function viewCartera() {
         <p class="small muted">Se guarda solo en este dispositivo. No conectamos con tu bróker ni enviamos nada a ningún servidor.</p>
       `}
     </div>
+
+    ${snap.positions.length && (snap.irr != null || snap.twr) ? `
+      <div class="card">
+        <h2>Rentabilidad</h2>
+        <p class="small muted">Tu dinero no entró de golpe, así que hay dos formas correctas de medirlo y responden a preguntas distintas.</p>
+        <table class="data" style="margin-top:10px">
+          <tbody>
+            <tr>
+              <td><strong>Simple</strong><br><span class="small muted">valor ÷ aportado − 1</span></td>
+              <td class="num" style="color:${pnlColor(snap.pnlPct)}">${fmtPct(snap.pnlPct)}</td>
+              <td class="small ink2">De todo el periodo, sin tener en cuenta cuándo entró cada euro.</td>
+            </tr>
+            ${snap.irr != null ? `<tr>
+              <td><strong>TIR anual</strong><br><span class="small muted">ponderada por dinero</span></td>
+              <td class="num" style="color:${pnlColor(snap.irr)}">${fmtPct(snap.irr)}</td>
+              <td class="small ink2">Lo que ha rentado <strong>tu dinero</strong> al año, contando que cada aportación lleva dentro un tiempo distinto.</td>
+            </tr>` : ''}
+            ${snap.twr?.annualized != null ? `<tr>
+              <td><strong>TWR anual</strong><br><span class="small muted">ponderada por tiempo</span></td>
+              <td class="num" style="color:${pnlColor(snap.twr.annualized)}">${fmtPct(snap.twr.annualized)}</td>
+              <td class="small ink2">Lo que han rentado <strong>los activos</strong>, sin el efecto de cuándo aportaste. Es la comparable con un índice.</td>
+            </tr>` : ''}
+          </tbody>
+        </table>
+        ${snap.twr?.annualized == null ? '<p class="small muted" style="margin-top:8px">La TWR necesita saber cuánto valía la cartera en varias fechas: seguirá saliendo en cuanto vayas anotando valores con el tiempo.</p>' : ''}
+        <details style="margin-top:10px">
+          <summary class="small">Ver mis aportaciones (${snap.contributions.length})</summary>
+          <table class="data" style="margin-top:8px">
+            <thead><tr><th>Fecha</th><th style="text-align:right">Importe</th><th style="text-align:right">Tiempo dentro</th></tr></thead>
+            <tbody>
+              ${contributionBreakdown(snap.contributions).map(c => `<tr>
+                <td>${new Date(c.ts).toLocaleDateString('es-ES')}</td>
+                <td class="num" style="color:${c.amount >= 0 ? 'var(--ink)' : 'var(--critical)'}">${c.amount >= 0 ? '+' : ''}${fmtEur2.format(c.amount)}</td>
+                <td class="num">${c.years >= 1 ? `${c.years.toFixed(1)} años` : `${c.days} días`}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </details>
+      </div>` : ''}
 
     ${history.length >= 2 ? `
       <div class="card">
@@ -916,7 +957,7 @@ function viewCartera() {
           <strong>${fmtEur2.format(p.valueOrCost)}</strong>
           <span class="muted">· invertido ${fmtEur2.format(p.cost)}
           ${p.pnl != null ? `· <span style="color:${pnlColor(p.pnl)}">${p.pnl >= 0 ? '+' : ''}${fmtEur2.format(p.pnl)}</span>` : ''}
-          ${p.annualizedPct != null ? `· ${fmtPct(p.annualizedPct)} anual` : ''}</span>
+          ${p.irr != null ? `· ${fmtPct(p.irr)} anual (TIR)` : ''}</span>
         </p>
         <p class="small muted" style="margin:0 0 8px">
           ${p.units > 0 ? `${fmtUnits.format(p.units)} uds. × ${fmtEur2.format(p.entryPrice)} de coste medio · ` : ''}
@@ -957,6 +998,9 @@ function viewCartera() {
         <input id="hValue" class="field" type="number" min="0" step="any" inputmode="decimal" placeholder="lo que marca tu bróker">
       </div>
     </div>
+    <label class="small ink2" for="hDate">¿Cuándo aportaste este dinero?</label>
+    <input id="hDate" class="field" type="date" max="${new Date().toISOString().slice(0, 10)}" value="${new Date().toISOString().slice(0, 10)}">
+    <p class="small muted">Si lo compraste hace años, pon la fecha real: es lo que permite calcular tu rentabilidad anual de verdad.</p>
     <details style="margin-top:6px">
       <summary class="small muted">Añadir también las unidades (opcional)</summary>
       <label class="small ink2" for="hUnits" style="display:block;margin-top:8px">Nº de participaciones o acciones</label>
@@ -1040,10 +1084,12 @@ function viewCartera() {
       hint.textContent = 'Indica al menos cuánto dinero tienes invertido en este activo.';
       return;
     }
+    const dateStr = document.getElementById('hDate').value;
+    const at = dateStr ? Date.parse(dateStr + 'T12:00:00') : null;
     try {
       store.addHolding({
         portfolioId: pf.id, assetId: a.id, assetClass: a.assetClass,
-        currency: 'EUR', invested, units,
+        currency: 'EUR', invested, units, at,
         value: value > 0 ? value : null,
       });
       render();

@@ -3,14 +3,20 @@
 //
 // Modelo de una posición:
 //   { id, portfolioId, assetId, assetClass, currency,
-//     invested,                  // IMPORTE total aportado, en la divisa del usuario
-//     units,                     // opcional: nº de participaciones/acciones
-//     valuations: [{ts, value}], // revalorizaciones que el usuario va anotando
+//     contributions: [{ts, amount}], // cada aportación CON SU FECHA (negativo = retirada)
+//     invested,                      // suma de las aportaciones (derivado)
+//     units,                         // opcional: nº de participaciones/acciones
+//     valuations: [{ts, value}],     // revalorizaciones que el usuario va anotando
 //     addedAt }
 //
 // El importe es lo primario porque es lo que el usuario conoce sin dudar
 // ("metí 500 €"); las unidades son opcionales y solo sirven para poder valorar
-// a precio de mercado. Como el histórico local se queda corto para muchos
+// a precio de mercado.
+//
+// Las aportaciones se guardan una a una con su fecha, no agregadas: 500 € de
+// hace tres años y 300 € del mes pasado no han corrido la misma suerte, y sin
+// las fechas no hay forma de calcular la TIR ni el rendimiento por tramos
+// (ver js/core/returns.js). Como el histórico local se queda corto para muchos
 // activos, el usuario puede anotar periódicamente cuánto vale hoy su posición:
 // esa valoración manual es la fuente de verdad cuando es más reciente que el
 // último precio disponible.
@@ -18,15 +24,31 @@
 // Convención de divisa: el llamante entrega importes y precios ya homogéneos
 // (todo en la misma divisa). El módulo no convierte nada: así permanece puro.
 
-// Migra una posición del modelo antiguo (units + entryPrice) al actual.
+import { moneyWeightedReturn, timeWeightedReturn, averageHoldingYears } from './returns.js';
+
+// Migra una posición de los modelos antiguos al actual.
+//   v1: units + entryPrice          → invested derivado
+//   v2: invested agregado           → una aportación única en addedAt
+// `invested` pasa a ser SIEMPRE la suma de las aportaciones: guardar cada una
+// con su fecha es lo que permite calcular TIR y rentabilidad por tramos.
 export function normalizeHolding(h) {
   const units = Number(h.units) || 0;
-  const invested = h.invested != null
+  const legacyInvested = h.invested != null
     ? Number(h.invested) || 0
     : units * (Number(h.entryPrice) || 0);
+
+  let contributions = Array.isArray(h.contributions) ? h.contributions : null;
+  if (!contributions || !contributions.length) {
+    contributions = legacyInvested > 0
+      ? [{ ts: h.addedAt || Date.now(), amount: legacyInvested }]
+      : [];
+  }
+  const invested = contributions.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+
   return {
     ...h,
     units,
+    contributions,
     invested,
     valuations: Array.isArray(h.valuations) ? h.valuations : [],
   };
@@ -73,8 +95,11 @@ export function positionSnapshot(holding, price, { priceTs = null, now = Date.no
   }
 
   const valued = value != null;
-  const years = h.addedAt ? Math.max(0, (now - h.addedAt) / (365.25 * 86400000)) : 0;
   const pnlPct = valued && cost > 0 ? value / cost - 1 : null;
+  // TIR: tiene en cuenta cuánto tiempo lleva dentro cada aportación
+  const irr = valued
+    ? moneyWeightedReturn({ contributions: h.contributions, currentValue: value, now })
+    : null;
 
   return {
     ...h,
@@ -91,8 +116,10 @@ export function positionSnapshot(holding, price, { priceTs = null, now = Date.no
     valueOrCost: valued ? value : cost,
     pnl: valued ? value - cost : null,
     pnlPct,
-    // rentabilidad anualizada: solo tiene sentido con algo de recorrido
-    annualizedPct: pnlPct != null && years >= 0.5 ? Math.pow(1 + pnlPct, 1 / years) - 1 : null,
+    // rentabilidad anual real de tu dinero, ponderada por cuándo lo aportaste
+    irr,
+    avgYears: averageHoldingYears(h.contributions, now),
+    contributionCount: h.contributions.length,
     valuationCount: (h.valuations || []).length,
   };
 }
@@ -120,10 +147,22 @@ export function portfolioSnapshot(holdings, priceOf, { capitalBase = 0, priceTsO
     byClass[c] = (byClass[c] || 0) + (totalValue > 0 ? (p.valueOrCost / totalValue) * 100 : 0);
   }
 
-  // Antigüedad de la cartera para anualizar, desde la primera compra
-  const firstAdded = positions.reduce((m, p) => (p.addedAt && (!m || p.addedAt < m) ? p.addedAt : m), null);
-  const years = firstAdded ? Math.max(0, (now - firstAdded) / (365.25 * 86400000)) : 0;
   const pnlPct = totalCost > 0 ? totalValue / totalCost - 1 : null;
+
+  // Rentabilidades con todas las aportaciones de la cartera y sus fechas
+  const contributions = positions.flatMap(p => p.contributions || []);
+  const irr = totalValue > 0
+    ? moneyWeightedReturn({ contributions, currentValue: totalValue, now })
+    : null;
+  // TWR: exige saber cuánto valía la cartera en cada tramo, así que solo sale
+  // si el usuario ha ido anotando valoraciones en fechas distintas
+  const history = valuationHistory(holdings, { now });
+  const twr = history.length >= 1
+    ? timeWeightedReturn({
+        valuations: history.map(x => ({ ts: Date.parse(x.date), value: x.value })),
+        contributions, currentValue: totalValue, now,
+      })
+    : null;
 
   // La posición más desfasada marca cuánto hace que la foto no se refresca
   const staleDays = positions.reduce((m, p) => (p.staleDays != null && (m == null || p.staleDays > m) ? p.staleDays : m), null);
@@ -136,7 +175,10 @@ export function portfolioSnapshot(holdings, priceOf, { capitalBase = 0, priceTsO
     capitalBase: base,
     pnl: totalValue - totalCost,
     pnlPct,
-    annualizedPct: pnlPct != null && years >= 0.5 ? Math.pow(1 + pnlPct, 1 / years) - 1 : null,
+    contributions,
+    irr,                                        // TIR anualizada de tu dinero
+    twr,                                        // rentabilidad de los activos (comparable con índices)
+    avgYears: averageHoldingYears(contributions, now),
     investedPct: base > 0 ? (totalValue / base) * 100 : 0,
     liquidityPct: base > 0 ? Math.max(0, 100 - (totalValue / base) * 100) : 100,
     staleDays,
@@ -174,12 +216,3 @@ export function valuationHistory(holdings, { now = Date.now() } = {}) {
   return out;
 }
 
-// Suma una nueva aportación al importe invertido y, si se conocen, a las
-// unidades. Se usa al comprar más de un activo que ya está en cartera.
-export function mergeLots(existing, addedInvested, addedUnits = 0) {
-  const e = normalizeHolding(existing || {});
-  return {
-    invested: e.invested + (Number(addedInvested) || 0),
-    units: e.units + (Number(addedUnits) || 0),
-  };
-}
