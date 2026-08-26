@@ -149,6 +149,17 @@ export function portfolioSnapshot(holdings, priceOf, { capitalBase = 0, priceTsO
 
   const pnlPct = totalCost > 0 ? totalValue / totalCost - 1 : null;
 
+  // Bruto frente a neto: desde que las ventas entran como aportación negativa,
+  // `totalCost` es el APORTADO NETO. Separarlo evita la lectura engañosa de
+  // "invertido 800 €" cuando en realidad pusiste 1.000 y sacaste 200.
+  let contributed = 0, withdrawn = 0;
+  for (const p of positions) {
+    for (const c of p.contributions || []) {
+      if (c.amount >= 0) contributed += c.amount;
+      else withdrawn += -c.amount;
+    }
+  }
+
   // Rentabilidades con todas las aportaciones de la cartera y sus fechas
   const contributions = positions.flatMap(p => p.contributions || []);
   const irr = totalValue > 0
@@ -175,6 +186,10 @@ export function portfolioSnapshot(holdings, priceOf, { capitalBase = 0, priceTsO
     capitalBase: base,
     pnl: totalValue - totalCost,
     pnlPct,
+    contributed,                                // total aportado (bruto)
+    withdrawn,                                  // total retirado por ventas
+    // lo que has sacado ya + lo que aún tienes: el "dinero obtenido"
+    obtained: withdrawn + totalValue,
     contributions,
     irr,                                        // TIR anualizada de tu dinero
     twr,                                        // rentabilidad de los activos (comparable con índices)

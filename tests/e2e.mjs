@@ -184,6 +184,10 @@ await check('Aportaciones con fecha propia → TIR anual, no solo rentabilidad s
   const card = await page.locator('.card:has(h2:text-is("Rentabilidad"))').first().innerText();
   if (!/TIR anual/.test(card)) throw new Error('sin fila de TIR: ' + card);
   if (!/Simple/.test(card)) throw new Error('sin fila de rentabilidad simple');
+  // dinero puesto contra dinero obtenido, explícito
+  if (!/Aportado/.test(card)) throw new Error('sin total aportado');
+  if (!/Obtenido/.test(card)) throw new Error('sin total obtenido');
+  if (!/hacia el 0%/.test(card)) throw new Error('no advierte de la dilución al aportar');
   if (!/años|días/.test(card)) throw new Error('sin tiempo dentro por aportación');
 });
 

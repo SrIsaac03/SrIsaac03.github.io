@@ -349,6 +349,43 @@ test('invested es siempre la suma de las aportaciones', () => {
   approx(n.invested, 700);
 });
 
+test('Bruto vs neto: aportado, retirado y obtenido se distinguen', () => {
+  // pusiste 1000, vendiste 200, lo que queda vale 900 → ganancia real +100
+  const s = portfolioSnapshot([{
+    id: 'h1', assetId: 'X', assetClass: 'etf', addedAt: Date.parse('2026-01-01'),
+    contributions: [
+      { ts: Date.parse('2026-01-01'), amount: 1000 },
+      { ts: Date.parse('2027-01-01'), amount: -200 },
+    ],
+    valuations: [{ ts: Date.parse('2027-06-01'), value: 900 }],
+  }], () => null, { now: Date.parse('2027-06-02') });
+  approx(s.contributed, 1000);   // lo que pusiste de verdad
+  approx(s.withdrawn, 200);
+  approx(s.totalCost, 800);      // aportado NETO
+  approx(s.totalValue, 900);
+  approx(s.obtained, 1100);      // 200 en el bolsillo + 900 en cartera
+  approx(s.pnl, 100);            // 1100 − 1000, la ganancia real
+  approx(s.pnlPct, 0.125);
+});
+
+test('Aportar más empuja la rentabilidad simple hacia el 0% en ambos sentidos', () => {
+  const mk = (extra, value) => portfolioSnapshot([{
+    id: 'h1', assetId: 'X', assetClass: 'etf', addedAt: Date.parse('2026-01-01'),
+    contributions: [{ ts: Date.parse('2026-01-01'), amount: 1000 },
+      ...(extra ? [{ ts: Date.parse('2027-01-01'), amount: extra }] : [])],
+    valuations: [{ ts: Date.parse('2027-01-01'), value: value + extra }],
+  }], () => null, { now: Date.parse('2027-01-02') });
+
+  // en ganancias: aportar diluye el porcentaje…
+  const gain = mk(0, 1200).pnlPct, gainPlus = mk(1000, 1200).pnlPct;
+  assert(gainPlus < gain && gainPlus > 0, `${gain} → ${gainPlus}`);
+  // …y en pérdidas lo disimula, acercándolo también a cero
+  const loss = mk(0, 800).pnlPct, lossPlus = mk(1000, 800).pnlPct;
+  assert(lossPlus > loss && lossPlus < 0, `${loss} → ${lossPlus}`);
+  // el importe absoluto, en cambio, no se mueve por aportar
+  approx(mk(0, 800).pnl, mk(1000, 800).pnl, 1e-9);
+});
+
 console.log('— Rentabilidades con aportaciones en distintas fechas —');
 
 const YEAR = 365.25 * 86400000;
