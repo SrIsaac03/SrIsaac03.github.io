@@ -268,11 +268,18 @@ Holding(
   id UUID PK,
   portfolio_id UUID FK -> Portfolio,
   asset_id UUID FK -> Asset,
-  invested NUMERIC,             -- IMPORTE aportado, en la divisa del usuario
   units NUMERIC,                -- opcional: participaciones/acciones
   currency TEXT,                -- divisa de los importes (por defecto EUR)
   added_at TIMESTAMPTZ,
   UNIQUE (portfolio_id, asset_id)  -- una segunda compra suma, no duplica línea
+)
+
+-- Cada aportación CON SU FECHA. El importe total es la suma, no un campo:
+-- agregarlo destruiría la información que necesitan la TIR y la TWR.
+HoldingContribution(
+  holding_id UUID FK -> Holding,
+  ts TIMESTAMPTZ,
+  amount NUMERIC                -- positivo = aportación, negativo = retirada (venta)
 )
 
 -- Revalorizaciones que el usuario va anotando periódicamente
@@ -453,6 +460,30 @@ invertido**, unidades opcionales y el histórico de valoraciones).
 **Por qué el importe es lo primario:** el usuario sabe sin dudar cuánto dinero puso ("metí 500 €");
 las unidades y el precio medio los tiene que buscar. Las unidades quedan como dato opcional que
 habilita la valoración automática a precio de mercado.
+
+**Por qué cada aportación guarda su fecha:** 500 € puestos el 1/1/26 y 300 € puestos el 3/4/27 no
+han corrido la misma suerte. Si se agrega todo en un único `invested`, esa información se pierde y
+lo único calculable es `valor / aportado − 1`, que mezcla periodos distintos. Con las fechas salen
+las dos métricas correctas (`js/core/returns.js`), que responden a preguntas distintas:
+
+| Métrica | Qué contesta | Qué necesita |
+|---|---|---|
+| **Simple** | Cuánto he ganado en total | valor y aportado |
+| **TIR** (money-weighted, XIRR) | Qué ha rentado **mi dinero** al año, contando cuánto tiempo lleva dentro cada euro | las aportaciones con fecha + el valor actual |
+| **TWR** (time-weighted) | Qué han rentado **los activos**, sin el efecto de cuándo aporté. Es lo que publican los fondos, así que es lo comparable con un índice | valoraciones intermedias en varias fechas |
+
+La TIR se resuelve por **bisección** sobre el VAN en `[-0,9999, 10]`: más lenta que Newton-Raphson
+pero no diverge nunca, que con flujos irregulares es lo que importa. Se devuelve `null` si el
+recorrido total es menor de 30 días — anualizar un +2% de una semana daría un +180% sin sentido.
+
+La TWR encadena el rendimiento de cada tramo entre valoraciones conocidas, descontando del valor
+final de cada tramo el dinero que entró en él. Convención: una valoración con la misma fecha que una
+aportación recoge el valor **después** de esa aportación, que es lo que el usuario ve en su bróker.
+Si no hay valoraciones intermedias, se devuelve `null` y la interfaz lo explica en vez de inventar
+un número.
+
+Las ventas entran como **aportación negativa fechada**, para que la TIR sepa que ese dinero salió y
+cuándo.
 
 **Por qué hacen falta valoraciones manuales:** el histórico empaquetado llega hasta 2022 para la
 mayoría de activos y no cubre todo el universo. Sin un valor que el usuario refresque, la cartera

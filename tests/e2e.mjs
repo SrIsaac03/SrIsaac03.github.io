@@ -169,6 +169,25 @@ await check('La cartera y sus valoraciones persisten al recargar (almacenamiento
   if (!/\+50,0%|\+50%/.test(txt)) throw new Error('se perdió la valoración anotada: ' + txt);
 });
 
+await check('Aportaciones con fecha propia → TIR anual, no solo rentabilidad simple', async () => {
+  // segunda aportación al mismo activo, fechada dos años atrás
+  await page.selectOption('#hAsset', 'KO');
+  await page.fill('#hInvested', '500');
+  const old = new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10);
+  await page.fill('#hDate', old);
+  await page.click('#hAdd');
+  await page.waitForSelector('text=Rentabilidad anual (TIR)', { timeout: 5000 });
+  // el desglose debe listar las dos aportaciones con sus fechas
+  await page.locator('summary:has-text("Ver mis aportaciones")').click();
+  const rows = await page.locator('.card table.data tbody tr').count();
+  if (rows < 2) throw new Error(`solo ${rows} filas: faltan aportaciones`);
+  const card = await page.locator('.card:has(h2:text-is("Rentabilidad"))').first().innerText();
+  if (!/TIR anual/.test(card)) throw new Error('sin fila de TIR: ' + card);
+  if (!/Simple/.test(card)) throw new Error('sin fila de rentabilidad simple');
+  if (!/años|días/.test(card)) throw new Error('sin tiempo dentro por aportación');
+});
+
+
 await check('Portafolios: crear el 2º funciona, el 3º está bloqueado', async () => {
   await page.locator('nav.tabs button:has-text("Cartera")').click();
   await page.waitForSelector('#npfname');

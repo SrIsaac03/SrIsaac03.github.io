@@ -6,7 +6,7 @@
 //   · Todo lo demás same-origin: stale-while-revalidate.
 // Sube CACHE_VERSION cuando cambie el shell para invalidar la caché antigua.
 
-const CACHE_VERSION = 'copiloto-v4';
+const CACHE_VERSION = 'copiloto-v5';
 const SHELL = [
   './',
   './index.html',
@@ -24,6 +24,7 @@ const SHELL = [
   './js/core/preferences.js',
   './js/core/holdings.js',
   './js/core/review.js',
+  './js/core/returns.js',
   './js/core/strategies.js',
   './manifest.webmanifest',
 ];

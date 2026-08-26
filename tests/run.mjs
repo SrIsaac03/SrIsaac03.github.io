@@ -9,7 +9,8 @@ import { BROKERS, getBroker, brokerTerms } from '../js/core/brokers.js';
 import { computeFeedbackAdjustments, isSuppressed, REJECT_REASONS } from '../js/core/feedback.js';
 import { ASSETS, getAsset } from '../js/core/assets.js';
 import { derivePreferences } from '../js/core/preferences.js';
-import { portfolioSnapshot, positionSnapshot, mergeLots, normalizeHolding, valuationHistory } from '../js/core/holdings.js';
+import { portfolioSnapshot, positionSnapshot, normalizeHolding, valuationHistory } from '../js/core/holdings.js';
+import { xirr, moneyWeightedReturn, timeWeightedReturn, contributionBreakdown, averageHoldingYears } from '../js/core/returns.js';
 import { reviewHolding, reviewPortfolio, healthScore } from '../js/core/review.js';
 import { generateStrategyOptions } from '../js/core/strategies.js';
 
@@ -321,18 +322,142 @@ test('Una posición sin precio se valora a coste y marca la cartera como incompl
   assert(s.positions[0].pnl === null, 'sin precio no hay plusvalía inventada');
 });
 
-test('mergeLots suma la nueva aportación al importe y a las unidades', () => {
-  const m = mergeLots({ invested: 1000, units: 10 }, 500, 4);
-  approx(m.invested, 1500); approx(m.units, 14);
-});
-
-test('Migración: una posición del modelo antiguo deriva su importe invertido', () => {
-  const old = { id: 'h1', assetId: 'AAPL', units: 10, entryPrice: 100 };
+test('Migración: una posición del modelo antiguo deriva importe y aportación', () => {
+  const t = Date.parse('2024-01-01');
+  const old = { id: 'h1', assetId: 'AAPL', units: 10, entryPrice: 100, addedAt: t };
   const n = normalizeHolding(old);
   approx(n.invested, 1000);
-  assert(Array.isArray(n.valuations) && n.valuations.length === 0);
+  assert(n.contributions.length === 1 && n.contributions[0].ts === t, JSON.stringify(n.contributions));
   const p = positionSnapshot(old, 150);
   approx(p.value, 1500); approx(p.pnlPct, 0.5);
+});
+
+test('Migración: el modelo con importe agregado se convierte en una aportación', () => {
+  const t = Date.parse('2025-03-01');
+  const n = normalizeHolding({ id: 'h1', invested: 800, addedAt: t });
+  assert(n.contributions.length === 1, JSON.stringify(n.contributions));
+  approx(n.contributions[0].amount, 800);
+  assert(n.contributions[0].ts === t);
+});
+
+test('invested es siempre la suma de las aportaciones', () => {
+  const n = normalizeHolding({ contributions: [
+    { ts: Date.parse('2026-01-01'), amount: 500 },
+    { ts: Date.parse('2027-04-03'), amount: 300 },
+    { ts: Date.parse('2027-06-01'), amount: -100 }, // retirada
+  ] });
+  approx(n.invested, 700);
+});
+
+console.log('— Rentabilidades con aportaciones en distintas fechas —');
+
+const YEAR = 365.25 * 86400000;
+
+test('XIRR: una sola aportación que gana un 10% en un año → 10%', () => {
+  const t0 = Date.parse('2026-01-01');
+  const r = xirr([{ ts: t0, amount: -1000 }, { ts: t0 + YEAR, amount: 1100 }]);
+  approx(r, 0.10, 1e-4, `${r}`);
+});
+
+test('XIRR: dos aportaciones en fechas distintas no dan la rentabilidad simple', () => {
+  const t0 = Date.parse('2026-01-01');
+  // 1000 € al inicio + 1000 € al año; vale 2200 € a los dos años.
+  // La rentabilidad simple diría 10% (2200/2000), pero la mitad del dinero
+  // solo llevaba un año dentro: la TIR real es mayor.
+  const r = xirr([
+    { ts: t0, amount: -1000 },
+    { ts: t0 + YEAR, amount: -1000 },
+    { ts: t0 + 2 * YEAR, amount: 2200 },
+  ]);
+  assert(r > 0.05 && r < 0.10, `TIR=${r}`);
+  // comprobación independiente: el VAN a esa tasa debe anularse
+  const npv = -1000 - 1000 / (1 + r) + 2200 / Math.pow(1 + r, 2);
+  approx(npv, 0, 1e-6, `VAN=${npv}`);
+});
+
+test('XIRR: sin recorrido suficiente no se anualiza (evita cifras absurdas)', () => {
+  const t0 = Date.now();
+  const r = xirr([{ ts: t0, amount: -1000 }, { ts: t0 + 5 * 86400000, amount: 1020 }]);
+  assert(r === null, `un +2% en 5 días no es un ${r} anual`);
+});
+
+test('XIRR: flujos sin cambio de signo o insuficientes → null', () => {
+  assert(xirr([]) === null);
+  assert(xirr([{ ts: 0, amount: -100 }]) === null);
+  assert(xirr([{ ts: 0, amount: -100 }, { ts: YEAR, amount: -100 }]) === null);
+});
+
+test('moneyWeightedReturn invierte el signo de las aportaciones correctamente', () => {
+  const t0 = Date.parse('2026-01-01');
+  const r = moneyWeightedReturn({
+    contributions: [{ ts: t0, amount: 1000 }],
+    currentValue: 1100, now: t0 + YEAR,
+  });
+  approx(r, 0.10, 1e-4, `${r}`);
+});
+
+test('El ejemplo real: 500 € el 1/1/26 y 300 € el 3/4/27', () => {
+  const c = [
+    { ts: Date.parse('2026-01-01'), amount: 500 },
+    { ts: Date.parse('2027-04-03'), amount: 300 },
+  ];
+  const now = Date.parse('2028-01-01');
+  const r = moneyWeightedReturn({ contributions: c, currentValue: 900, now });
+  assert(r != null && r > 0, `TIR=${r}`);
+  // la rentabilidad simple (900/800 = 12,5%) es de todo el periodo;
+  // la TIR es anual, y el segundo tramo llevaba menos tiempo dentro
+  const simple = 900 / 800 - 1;
+  assert(Math.abs(r - simple) > 1e-3, 'la TIR no debería coincidir con la simple');
+  const yrs = averageHoldingYears(c, now);
+  assert(yrs > 1 && yrs < 2, `antigüedad media ${yrs} años`);
+});
+
+test('TWR encadena los tramos y descuenta el dinero aportado en cada uno', () => {
+  const t0 = Date.parse('2026-01-01'), t1 = Date.parse('2027-01-01'), t2 = Date.parse('2028-01-01');
+  // 1000 → 1100 (+10%), luego entran 1000 más (2100) → 2310 (+10%)
+  const out = timeWeightedReturn({
+    valuations: [{ ts: t0, value: 1000 }, { ts: t1, value: 2100 }],
+    contributions: [{ ts: t0, amount: 1000 }, { ts: t1, amount: 1000 }],
+    currentValue: 2310, now: t2,
+  });
+  assert(out != null, 'debería poder calcularse');
+  approx(out.total, 0.21, 1e-6, `total=${out.total}`);   // 1,10 × 1,10 − 1
+  approx(out.annualized, 0.10, 1e-3, `anual=${out.annualized}`);
+  assert(out.periods.length === 2, `${out.periods.length} tramos`);
+  approx(out.periods[0].ret, 0.10, 1e-6);
+  approx(out.periods[1].ret, 0.10, 1e-6);
+});
+
+test('TWR necesita valoraciones intermedias: sin ellas devuelve null', () => {
+  assert(timeWeightedReturn({ valuations: [], contributions: [{ ts: 0, amount: 100 }], currentValue: null }) === null);
+});
+
+test('contributionBreakdown detalla cada tramo con su antigüedad', () => {
+  const now = Date.parse('2028-01-01');
+  const b = contributionBreakdown([
+    { ts: Date.parse('2027-04-03'), amount: 300 },
+    { ts: Date.parse('2026-01-01'), amount: 500 },
+  ], now);
+  assert(b[0].ts < b[1].ts, 'debe venir ordenado por fecha');
+  approx(b[0].amount, 500);
+  assert(b[0].years > b[1].years, 'el dinero más antiguo lleva más tiempo dentro');
+  assert(b.every(x => x.kind === 'aportacion'));
+});
+
+test('La cartera agrega los flujos de todas sus posiciones para la TIR', () => {
+  const now = Date.parse('2028-01-01');
+  const hs = [
+    { id: 'a', assetId: 'X', assetClass: 'etf', addedAt: Date.parse('2026-01-01'),
+      contributions: [{ ts: Date.parse('2026-01-01'), amount: 500 }], valuations: [{ ts: now, value: 600 }] },
+    { id: 'b', assetId: 'Y', assetClass: 'etf', addedAt: Date.parse('2027-04-03'),
+      contributions: [{ ts: Date.parse('2027-04-03'), amount: 300 }], valuations: [{ ts: now, value: 330 }] },
+  ];
+  const s = portfolioSnapshot(hs, () => null, { now });
+  approx(s.totalCost, 800);
+  approx(s.totalValue, 930);
+  assert(s.contributions.length === 2, 'debe reunir las aportaciones de ambas posiciones');
+  assert(s.irr != null && s.irr > 0, `TIR=${s.irr}`);
+  assert(s.avgYears > 1 && s.avgYears < 2, `antigüedad media ${s.avgYears}`);
 });
 
 test('Una posición sin unidades se valora por el importe que anotó el usuario', () => {
@@ -344,8 +469,8 @@ test('Una posición sin unidades se valora por el importe que anotó el usuario'
   approx(p.pnlPct, 0.3);
   assert(p.valueSource === 'manual', p.valueSource);
   assert(p.staleDays === 2, `${p.staleDays}`);
-  // 2 años de recorrido: 30% total ≈ 14% anual
-  assert(p.annualizedPct > 0.13 && p.annualizedPct < 0.15, `${p.annualizedPct}`);
+  // aportación única hace 2 años: +30% total ≈ 14% anual
+  assert(p.irr > 0.13 && p.irr < 0.15, `TIR=${p.irr}`);
 });
 
 test('Gana el dato más fresco: valoración manual vs precio de mercado', () => {
