@@ -57,7 +57,7 @@ financiero personalizado.
 
 ```bash
 node tools/build-data.mjs     # regenerar data/history.json desde los CSV
-node tests/run.mjs            # suite de tests unitarios (93 tests)
+node tests/run.mjs            # suite de tests unitarios (95 tests)
 node backtest/tune.mjs        # búsqueda en rejilla de parámetros (train 1991-2010)
 node backtest/backtest.mjs    # informe completo → backtest/REPORT.md
 python3 -m http.server 8321   # servir la app en local

@@ -863,7 +863,7 @@ function viewCartera() {
       </div>
       ${snap.positions.length ? `
         <div class="tiles" role="list" style="margin-top:12px">
-          <div class="tile" role="listitem"><div class="k">Valor actual</div><div class="v">${fmtEur0.format(snap.totalValue)}</div><div class="k">invertido ${fmtEur0.format(snap.totalCost)}</div></div>
+          <div class="tile" role="listitem"><div class="k">Valor actual</div><div class="v">${fmtEur0.format(snap.totalValue)}</div><div class="k">aportado ${fmtEur0.format(snap.contributed)}${snap.withdrawn > 0 ? ` · retirado ${fmtEur0.format(snap.withdrawn)}` : ''}</div></div>
           <div class="tile" role="listitem"><div class="k">Ganancia / pérdida</div><div class="v" style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur0.format(snap.pnl)}</div><div class="k">${fmtPct(snap.pnlPct)} sobre lo aportado</div></div>
           ${snap.irr != null ? `<div class="tile" role="listitem"><div class="k">Rentabilidad anual (TIR)</div><div class="v" style="color:${pnlColor(snap.irr)}">${fmtPct(snap.irr)}</div><div class="k">tu dinero, ${snap.avgYears != null ? `${snap.avgYears.toFixed(1)} años de media` : ''}</div></div>` : ''}
           <div class="tile" role="listitem"><div class="k">Capital invertido</div><div class="v">${Math.round(snap.investedPct)}%</div><div class="k">${choice ? `objetivo ${choice.equityPct}%` : 'elige un plan en Hoy'}</div></div>
@@ -885,13 +885,24 @@ function viewCartera() {
     ${snap.positions.length && (snap.irr != null || snap.twr) ? `
       <div class="card">
         <h2>Rentabilidad</h2>
-        <p class="small muted">Tu dinero no entró de golpe, así que hay dos formas correctas de medirlo y responden a preguntas distintas.</p>
+        <p class="small muted">Lo que has puesto frente a lo que has obtenido, y las dos formas correctas de convertirlo en un porcentaje anual.</p>
         <table class="data" style="margin-top:10px">
           <tbody>
+            <tr><td>Aportado</td><td class="num">${fmtEur2.format(snap.contributed)}</td><td class="small ink2">Todo el dinero que has metido.</td></tr>
+            ${snap.withdrawn > 0 ? `<tr><td>Retirado por ventas</td><td class="num">${fmtEur2.format(snap.withdrawn)}</td><td class="small ink2">Ya está en tu bolsillo.</td></tr>` : ''}
+            <tr><td>Valor en cartera</td><td class="num">${fmtEur2.format(snap.totalValue)}</td><td class="small ink2">Lo que vale hoy lo que aún tienes.</td></tr>
             <tr>
-              <td><strong>Simple</strong><br><span class="small muted">valor ÷ aportado − 1</span></td>
+              <td><strong>Obtenido</strong></td>
+              <td class="num"><strong>${fmtEur2.format(snap.obtained)}</strong></td>
+              <td class="small ink2">Retirado + valor actual. La diferencia con lo aportado es tu ganancia real:
+                <strong style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur2.format(snap.pnl)}</strong>.</td>
+            </tr>
+            <tr>
+              <td><strong>Simple</strong><br><span class="small muted">obtenido ÷ aportado − 1</span></td>
               <td class="num" style="color:${pnlColor(snap.pnlPct)}">${fmtPct(snap.pnlPct)}</td>
-              <td class="small ink2">De todo el periodo, sin tener en cuenta cuándo entró cada euro.</td>
+              <td class="small ink2">De todo el periodo. Ojo: cada aportación nueva empuja este número
+                <strong>hacia el 0%</strong> — diluye las ganancias, pero también disimula las pérdidas.
+                El euro absoluto de arriba no tiene ese sesgo.</td>
             </tr>
             ${snap.irr != null ? `<tr>
               <td><strong>TIR anual</strong><br><span class="small muted">ponderada por dinero</span></td>

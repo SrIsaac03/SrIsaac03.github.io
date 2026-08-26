@@ -469,8 +469,19 @@ las dos métricas correctas (`js/core/returns.js`), que responden a preguntas di
 | Métrica | Qué contesta | Qué necesita |
 |---|---|---|
 | **Simple** | Cuánto he ganado en total | valor y aportado |
+| **Aportado / obtenido** | Cuánto dinero he puesto y cuánto tengo (retirado + valor actual) | los flujos |
 | **TIR** (money-weighted, XIRR) | Qué ha rentado **mi dinero** al año, contando cuánto tiempo lleva dentro cada euro | las aportaciones con fecha + el valor actual |
 | **TWR** (time-weighted) | Qué han rentado **los activos**, sin el efecto de cuándo aporté. Es lo que publican los fondos, así que es lo comparable con un índice | valoraciones intermedias en varias fechas |
+
+**Bruto frente a neto:** como las ventas entran como aportación negativa, `totalCost` es el aportado
+**neto**. Si pusiste 1.000 € y vendiste 200 €, `totalCost` = 800, que da la ganancia correcta
+(200 en el bolsillo + valor en cartera − 1.000) pero se leería mal como "invertido". Por eso el
+snapshot expone además `contributed` (bruto), `withdrawn` y `obtained` = retirado + valor actual.
+
+**Sesgo de la rentabilidad simple:** cada aportación nueva empuja el porcentaje **hacia el 0%**, no
+solo hacia abajo. Diluye las ganancias, pero también disimula las pérdidas: quien aporta
+periódicamente a un activo que cae ve un número más amable del que le corresponde. El importe
+absoluto en euros no tiene ese sesgo, así que se muestran juntos y la interfaz lo advierte.
 
 La TIR se resuelve por **bisección** sobre el VAN en `[-0,9999, 10]`: más lenta que Newton-Raphson
 pero no diverge nunca, que con flujos irregulares es lo que importa. Se devuelve `null` si el
