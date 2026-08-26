@@ -5,7 +5,6 @@
 import { normalizeHolding, positionSnapshot } from './holdings.js';
 
 const KEY = 'copiloto.v1';
-export const MAX_PORTFOLIOS = 2;
 
 function load() {
   try {
@@ -54,7 +53,7 @@ export function saveBroker(brokerId) {
   return patchState({ brokerId });
 }
 
-// --- Portafolios (límite estricto: MAX_PORTFOLIOS) ---
+// --- Portafolios (sin límite: el usuario organiza como quiera) ---
 
 export function listPortfolios() {
   return getState().portfolios.filter(p => !p.archived);
@@ -62,21 +61,34 @@ export function listPortfolios() {
 
 export function createPortfolio({ name, riskLevel }) {
   const s = getState();
-  const active = s.portfolios.filter(p => !p.archived);
-  if (active.length >= MAX_PORTFOLIOS) {
-    throw new Error(`Límite alcanzado: máximo ${MAX_PORTFOLIOS} portafolios simultáneos`);
-  }
-  const usedSlots = new Set(active.map(p => p.slot));
-  const slot = usedSlots.has(1) ? 2 : 1;
   const portfolio = {
     id: 'pf_' + Math.random().toString(36).slice(2, 10),
-    name, riskLevel, slot,
+    name: (name || '').trim() || `Cartera ${s.portfolios.filter(p => !p.archived).length + 1}`,
+    riskLevel,
     createdAt: Date.now(),
     archived: false,
   };
   s.portfolios.push(portfolio);
   save(s);
   return portfolio;
+}
+
+export function renamePortfolio(id, name) {
+  const s = getState();
+  const p = s.portfolios.find(x => x.id === id);
+  if (!p) return null;
+  const clean = (name || '').trim();
+  if (clean) { p.name = clean; save(s); }
+  return p;
+}
+
+export function setPortfolioRisk(id, riskLevel) {
+  const s = getState();
+  const p = s.portfolios.find(x => x.id === id);
+  if (!p) return null;
+  p.riskLevel = riskLevel;
+  save(s);
+  return p;
 }
 
 export function archivePortfolio(id) {
@@ -198,6 +210,31 @@ export function revalueMany(values, ts = Date.now()) {
     if (revalueHolding(id, Number(value), ts)) n++;
   }
   return n;
+}
+
+// Mover una posición a otra cartera conservando aportaciones y valoraciones.
+export function moveHolding(id, portfolioId) {
+  const s = getState();
+  const raw = s.holdings.find(x => x.id === id);
+  if (!raw || raw.portfolioId === portfolioId) return raw || null;
+  Object.assign(raw, normalizeHolding(raw));
+  // si el destino ya tiene ese activo, se fusionan en una sola línea
+  const target = s.holdings.find(h => h.portfolioId === portfolioId && h.assetId === raw.assetId);
+  if (target) {
+    Object.assign(target, normalizeHolding(target));
+    target.contributions = [...target.contributions, ...raw.contributions].sort((a, b) => a.ts - b.ts);
+    target.invested = target.contributions.reduce((sum, c) => sum + c.amount, 0);
+    target.units += raw.units;
+    target.valuations = [...target.valuations, ...raw.valuations].sort((a, b) => a.ts - b.ts);
+    target.addedAt = Math.min(target.addedAt || Infinity, raw.addedAt || Infinity);
+    s.holdings = s.holdings.filter(x => x.id !== id);
+    save(s);
+    return target;
+  }
+  raw.portfolioId = portfolioId;
+  raw.updatedAt = Date.now();
+  save(s);
+  return raw;
 }
 
 export function removeHolding(id) {

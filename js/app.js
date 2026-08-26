@@ -184,6 +184,53 @@ function stateOf(assetId) {
   return an.stateAt(Math.min(market.lastIndex, an.lastValid));
 }
 
+// Todas las posiciones de las carteras activas (las archivadas no cuentan).
+function activeHoldings() {
+  const ids = new Set(store.listPortfolios().map(p => p.id));
+  return store.listHoldings().filter(h => ids.has(h.portfolioId));
+}
+
+// Balance consolidado: todo tu patrimonio invertido, sumando carteras.
+function globalSnapshot() {
+  const s = store.getState();
+  const capital = CAPITAL_BANDS.find(b => b.id === s.finances?.capitalBandId)?.mid ?? 10000;
+  return portfolioSnapshot(eurHoldings(activeHoldings()), h => h.livePrice,
+    { capitalBase: capital, priceTsOf: h => h.priceTs });
+}
+
+// Snapshot de una cartera concreta, sin pasar por el motor de revisión.
+function snapshotOf(portfolioId) {
+  return portfolioSnapshot(eurHoldings(store.listHoldings(portfolioId)), h => h.livePrice,
+    { priceTsOf: h => h.priceTs });
+}
+
+// Barra de distribución + leyenda. Mismo lenguaje visual que las opciones de
+// cartera, para que "distribución" se lea igual en toda la app.
+function distribution(segments, { legend = true, max = 8 } = {}) {
+  const items = segments.filter(s => s.value > 0).sort((a, b) => b.value - a.value);
+  const total = items.reduce((s, x) => s + x.value, 0);
+  if (!total) return '';
+  // agrupamos la cola en "Otros" para que la leyenda no se dispare
+  const shown = items.slice(0, max);
+  const rest = items.slice(max);
+  if (rest.length) shown.push({ name: `Otros (${rest.length})`, value: rest.reduce((s, x) => s + x.value, 0) });
+  const withPct = shown.map((x, i) => ({ ...x, pct: (x.value / total) * 100, color: `var(--cat-${(i % 6) + 1})` }));
+  return `
+    <div class="stack" role="img" aria-label="Distribución: ${withPct.map(x => `${esc(x.name)} ${round1(x.pct)}%`).join(', ')}">
+      ${withPct.map(x => `<span style="width:${x.pct}%;background:${x.color}"></span>`).join('')}
+    </div>
+    ${legend ? `<ul class="poslist">
+      ${withPct.map(x => `<li>
+        <span class="dot" style="background:${x.color}" aria-hidden="true"></span>
+        <span class="nm">${esc(x.name)}</span>
+        <span class="pp">${round1(x.pct)}%</span>
+        <span class="pp muted" style="min-width:74px;text-align:right">${fmtEur0.format(x.value)}</span>
+      </li>`).join('')}
+    </ul>` : ''}`;
+}
+
+const CLASS_LABEL = { etf: 'ETFs', equity: 'Acciones', crypto: 'Cripto', fund: 'Fondos', bond: 'Bonos', otros: 'Otros' };
+
 // Revisión completa de la cartera guardada: veredicto por posición + alertas.
 function runReview(portfolio, targetEquityPct) {
   const ctx = engineCtx(portfolio);
@@ -820,182 +867,274 @@ function showRejectModal(r) {
 
 function viewCartera() {
   const portfolios = store.listPortfolios();
-  const pf = portfolios.find(p => p.id === selectedPortfolioId) || portfolios[0];
-  selectedPortfolioId = pf?.id;
 
   if (!market.ready) {
     $app.innerHTML = '<div class="card"><h2>Cargando precios…</h2><p class="muted">Necesitamos las cotizaciones para valorar tu cartera.</p></div>';
     return;
   }
 
-  const choice = store.getStrategyChoice(pf.id);
-  const rv = runReview(pf, choice?.equityPct ?? null);
-  const snap = rv.snapshot;
-  const reviewOf = id => rv.reviews.find(r => r.assetId === id);
+  // «Todas» es una vista de pleno derecho, no un caso especial: es lo primero
+  // que quieres ver al abrir la app.
+  const pf = portfolios.find(p => p.id === selectedPortfolioId) || null;
+  const global = globalSnapshot();
   const pnlColor = x => (x == null ? 'var(--ink-2)' : x >= 0 ? 'var(--good-text)' : 'var(--critical)');
-  // Medidor de salud 0-100: resumen visual de los factores del veredicto
-  const meter = (health, verdict) => health == null ? '' : `
-    <div class="row" style="gap:8px;margin:2px 0 8px">
-      <div class="health-meter" role="img" aria-label="Salud técnica ${health} sobre 100">
-        <div class="hm-fill hm-${verdict}" style="width:${health}%"></div>
-      </div>
-      <span class="small muted">salud ${health}/100</span>
-    </div>`;
-
-  // Frescura de la foto: sin valores puestos al día, la cartera es ficción
-  const history = valuationHistory(eurHoldings(store.listHoldings(pf.id)));
-  const staleWarn = snap.staleDays != null && snap.staleDays > 30;
-  const freshness = snap.positions.length === 0 ? ''
-    : snap.staleDays == null ? 'Sin valores anotados todavía'
-    : snap.staleDays === 0 ? 'Valores al día de hoy'
-    : `Última actualización hace ${snap.staleDays} ${snap.staleDays === 1 ? 'día' : 'días'}`;
+  const signed = (x, fmt) => (x >= 0 ? '+' : '') + fmt.format(x);
 
   const frag = h(`<div class="fade-in">
-    ${portfolios.length > 1 ? `
-      <div class="row" style="margin-top:10px" role="group" aria-label="Elegir portafolio">
-        ${portfolios.map(p => `<button class="btn sm ${p.id === pf.id ? '' : 'ghost'}" data-pf="${p.id}" aria-pressed="${p.id === pf.id}">${esc(p.name)}</button>`).join('')}
-      </div>` : ''}
-
     <div class="card">
       <div class="row spread">
-        <h2 style="margin:0">${esc(pf.name)}</h2>
-        ${choice ? `<span class="chip">Plan: ${esc(choice.name || choice.strategyId)}</span>` : ''}
+        <h2 style="margin:0">${pf ? esc(pf.name) : 'Todas tus carteras'}</h2>
+        ${pf ? `<button class="btn ghost sm" id="editPf">Ajustes de esta cartera</button>` : ''}
       </div>
-      ${snap.positions.length ? `
-        <div class="tiles" role="list" style="margin-top:12px">
-          <div class="tile" role="listitem"><div class="k">Valor actual</div><div class="v">${fmtEur0.format(snap.totalValue)}</div><div class="k">aportado ${fmtEur0.format(snap.contributed)}${snap.withdrawn > 0 ? ` · retirado ${fmtEur0.format(snap.withdrawn)}` : ''}</div></div>
-          <div class="tile" role="listitem"><div class="k">Ganancia / pérdida</div><div class="v" style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur0.format(snap.pnl)}</div><div class="k">${fmtPct(snap.pnlPct)} sobre lo aportado</div></div>
-          ${snap.irr != null ? `<div class="tile" role="listitem"><div class="k">Rentabilidad anual (TIR)</div><div class="v" style="color:${pnlColor(snap.irr)}">${fmtPct(snap.irr)}</div><div class="k">tu dinero, ${snap.avgYears != null ? `${snap.avgYears.toFixed(1)} años de media` : ''}</div></div>` : ''}
-          <div class="tile" role="listitem"><div class="k">Capital invertido</div><div class="v">${Math.round(snap.investedPct)}%</div><div class="k">${choice ? `objetivo ${choice.equityPct}%` : 'elige un plan en Hoy'}</div></div>
-          ${rv.health != null ? `<div class="tile" role="listitem"><div class="k">Salud de la cartera</div><div class="v">${rv.health}<span class="small muted" style="font-weight:400">/100</span></div><div class="k">media ponderada por valor</div></div>` : ''}
-        </div>
-        <div class="row spread" style="margin-top:12px">
-          <span class="small ${staleWarn ? 'ink2' : 'muted'}">${esc(freshness)}</span>
-          <button class="btn sm" id="revalAll">Actualizar valores</button>
-        </div>
-        ${staleWarn ? `<div class="banner warn" style="margin-bottom:0">Los valores llevan ${snap.staleDays} días sin actualizarse: las rentabilidades y los veredictos que ves pueden no reflejar tu situación real. Ponlos al día con tu bróker abierto.</div>` : ''}
-        ${snap.unvalued ? `<p class="small muted" style="margin-top:10px">${snap.unvalued} ${snap.unvalued === 1 ? 'posición se valora' : 'posiciones se valoran'} a su coste porque aún no ${snap.unvalued === 1 ? 'tiene' : 'tienen'} valor anotado ni precio de mercado.</p>` : ''}
-      ` : `
-        <p class="ink2" style="margin-top:10px">Aún no has registrado nada. Añade abajo lo que <strong>ya tienes</strong> en tu bróker
-        y el motor analizará la tendencia de cada activo para decirte qué mantener, qué reforzar y qué vender.</p>
-        <p class="small muted">Se guarda solo en este dispositivo. No conectamos con tu bróker ni enviamos nada a ningún servidor.</p>
-      `}
+      <div id="summary"></div>
     </div>
 
-    ${snap.positions.length && (snap.irr != null || snap.twr) ? `
-      <div class="card">
-        <h2>Rentabilidad</h2>
-        <p class="small muted">Lo que has puesto frente a lo que has obtenido, y las dos formas correctas de convertirlo en un porcentaje anual.</p>
-        <table class="data" style="margin-top:10px">
-          <tbody>
-            <tr><td>Aportado</td><td class="num">${fmtEur2.format(snap.contributed)}</td><td class="small ink2">Todo el dinero que has metido.</td></tr>
-            ${snap.withdrawn > 0 ? `<tr><td>Retirado por ventas</td><td class="num">${fmtEur2.format(snap.withdrawn)}</td><td class="small ink2">Ya está en tu bolsillo.</td></tr>` : ''}
-            <tr><td>Valor en cartera</td><td class="num">${fmtEur2.format(snap.totalValue)}</td><td class="small ink2">Lo que vale hoy lo que aún tienes.</td></tr>
-            <tr>
-              <td><strong>Obtenido</strong></td>
-              <td class="num"><strong>${fmtEur2.format(snap.obtained)}</strong></td>
-              <td class="small ink2">Retirado + valor actual. La diferencia con lo aportado es tu ganancia real:
-                <strong style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur2.format(snap.pnl)}</strong>.</td>
-            </tr>
-            <tr>
-              <td><strong>Simple</strong><br><span class="small muted">obtenido ÷ aportado − 1</span></td>
-              <td class="num" style="color:${pnlColor(snap.pnlPct)}">${fmtPct(snap.pnlPct)}</td>
-              <td class="small ink2">De todo el periodo. Ojo: cada aportación nueva empuja este número
-                <strong>hacia el 0%</strong> — diluye las ganancias, pero también disimula las pérdidas.
-                El euro absoluto de arriba no tiene ese sesgo.</td>
-            </tr>
-            ${snap.irr != null ? `<tr>
-              <td><strong>TIR anual</strong><br><span class="small muted">ponderada por dinero</span></td>
-              <td class="num" style="color:${pnlColor(snap.irr)}">${fmtPct(snap.irr)}</td>
-              <td class="small ink2">Lo que ha rentado <strong>tu dinero</strong> al año, contando que cada aportación lleva dentro un tiempo distinto.</td>
-            </tr>` : ''}
-            ${snap.twr?.annualized != null ? `<tr>
-              <td><strong>TWR anual</strong><br><span class="small muted">ponderada por tiempo</span></td>
-              <td class="num" style="color:${pnlColor(snap.twr.annualized)}">${fmtPct(snap.twr.annualized)}</td>
-              <td class="small ink2">Lo que han rentado <strong>los activos</strong>, sin el efecto de cuándo aportaste. Es la comparable con un índice.</td>
-            </tr>` : ''}
-          </tbody>
-        </table>
-        ${snap.twr?.annualized == null ? '<p class="small muted" style="margin-top:8px">La TWR necesita saber cuánto valía la cartera en varias fechas: seguirá saliendo en cuanto vayas anotando valores con el tiempo.</p>' : ''}
-        <details style="margin-top:10px">
-          <summary class="small">Ver mis aportaciones (${snap.contributions.length})</summary>
-          <table class="data" style="margin-top:8px">
-            <thead><tr><th>Fecha</th><th style="text-align:right">Importe</th><th style="text-align:right">Tiempo dentro</th></tr></thead>
-            <tbody>
-              ${contributionBreakdown(snap.contributions).map(c => `<tr>
-                <td>${new Date(c.ts).toLocaleDateString('es-ES')}</td>
-                <td class="num" style="color:${c.amount >= 0 ? 'var(--ink)' : 'var(--critical)'}">${c.amount >= 0 ? '+' : ''}${fmtEur2.format(c.amount)}</td>
-                <td class="num">${c.years >= 1 ? `${c.years.toFixed(1)} años` : `${c.days} días`}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </details>
-      </div>` : ''}
+    <div class="pf-switch" role="tablist" aria-label="Elegir cartera">
+      <button class="pf-chip ${pf ? '' : 'on'}" data-pf="" role="tab" aria-selected="${!pf}">
+        <span class="nm">Todas</span><span class="vv">${fmtEur0.format(global.totalValue)}</span>
+      </button>
+      ${portfolios.map(p => {
+        const s = snapshotOf(p.id);
+        return `<button class="pf-chip ${pf?.id === p.id ? 'on' : ''}" data-pf="${p.id}" role="tab" aria-selected="${pf?.id === p.id}">
+          <span class="nm">${esc(p.name)}</span><span class="vv">${fmtEur0.format(s.totalValue)}</span>
+        </button>`;
+      }).join('')}
+      <button class="pf-chip add" id="newPf" aria-label="Crear una cartera nueva"><span class="nm">+ Nueva</span></button>
+    </div>
 
-    ${history.length >= 2 ? `
-      <div class="card">
-        <h2>Evolución de tu cartera</h2>
-        <p class="small muted">Construida con los valores que has ido anotando (${history.length} actualizaciones).</p>
-        <div id="evolution"></div>
-      </div>` : ''}
-
-    ${rv.alerts.map(a => `<div class="banner ${a.level === 'warn' ? 'warn' : 'info'}">${esc(a.text)}</div>`).join('')}
-
-    <div id="positions"></div>
-    <div class="card" id="addCard"></div>
-    <h2 style="margin:22px 2px 8px;font-size:18px">Portafolios (${portfolios.length}/${store.MAX_PORTFOLIOS})</h2>
-    <div id="list"></div>
-    <div class="card" id="createCard"></div>
+    <div id="body"></div>
   </div>`);
 
-  // --- Posiciones con veredicto ---
-  const posEl = frag.querySelector('#positions');
-  for (const p of snap.positions) {
-    const r = reviewOf(p.assetId) || { verdict: 'sin_datos', reasons: [], info: [] };
-    const v = VERDICTS[r.verdict];
-    posEl.appendChild(h(`
-      <article class="rec holding v-${r.verdict}" aria-label="${esc(p.assetName)}: ${esc(v.label)}">
-        <div class="head">
-          <div>
-            <span class="name">${esc(p.assetName)}</span>
-            <span class="chip">${esc((p.assetClass || '').toUpperCase())}</span>
-            <span class="chip verdict ${r.verdict}">${esc(v.label)}</span>
-          </div>
-          <div class="pct" style="color:${pnlColor(p.pnlPct)}">${p.pnlPct == null ? '—' : (p.pnlPct >= 0 ? '+' : '') + fmtPct(p.pnlPct)}</div>
-        </div>
-        ${meter(r.health, r.verdict)}
-        <p class="small" style="margin:0 0 4px">
-          <strong>${fmtEur2.format(p.valueOrCost)}</strong>
-          <span class="muted">· invertido ${fmtEur2.format(p.cost)}
-          ${p.pnl != null ? `· <span style="color:${pnlColor(p.pnl)}">${p.pnl >= 0 ? '+' : ''}${fmtEur2.format(p.pnl)}</span>` : ''}
-          ${p.irr != null ? `· ${fmtPct(p.irr)} anual (TIR)` : ''}</span>
-        </p>
-        <p class="small muted" style="margin:0 0 8px">
-          ${p.units > 0 ? `${fmtUnits.format(p.units)} uds. × ${fmtEur2.format(p.entryPrice)} de coste medio · ` : ''}
-          ${round1(p.capitalPct)}% de tu capital · ${esc(valuationLabel(p))}
-        </p>
-        <ul>${[...r.reasons, ...(r.info || [])].map(x => `<li>${esc(x)}</li>`).join('')}</ul>
-        <div class="actions">
-          <button class="btn sm ghost" data-reval="${p.id}">Actualizar valor</button>
-          ${r.verdict === 'vender' || r.verdict === 'reducir'
-            ? `<button class="btn sm" data-sell="${p.id}">Registrar venta</button>`
-            : ''}
-          <button class="btn ghost sm" data-edit="${p.id}">Editar</button>
-          <button class="btn ghost sm" data-drop="${p.id}">Quitar</button>
-        </div>
-      </article>`));
+  const summary = frag.querySelector('#summary');
+  const snap = pf ? snapshotOf(pf.id) : global;
+  // la revisión (veredictos, alertas, salud) solo aplica a una cartera concreta
+  const choice = pf ? store.getStrategyChoice(pf.id) : null;
+  const rv = pf ? runReview(pf, choice?.equityPct ?? null) : null;
+
+  if (!snap.positions.length) {
+    summary.innerHTML = `
+      <p class="ink2" style="margin-top:10px">${pf
+        ? 'Esta cartera está vacía. Añade lo que <strong>ya tienes</strong> en tu bróker.'
+        : 'Aún no has registrado nada. Añade lo que <strong>ya tienes</strong> y el motor analizará la tendencia de cada activo.'}</p>
+      <p class="small muted">Se guarda solo en este dispositivo. No conectamos con tu bróker ni enviamos nada a ningún servidor.</p>`;
+  } else {
+    const staleWarn = snap.staleDays != null && snap.staleDays > 30;
+    summary.innerHTML = `
+      <div class="tiles" role="list" style="margin-top:12px">
+        <div class="tile" role="listitem"><div class="k">Valor actual</div><div class="v">${fmtEur0.format(snap.totalValue)}</div><div class="k">aportado ${fmtEur0.format(snap.contributed)}</div></div>
+        <div class="tile" role="listitem"><div class="k">Ganancia / pérdida</div><div class="v" style="color:${pnlColor(snap.pnl)}">${signed(snap.pnl, fmtEur0)}</div><div class="k">${fmtPct(snap.pnlPct)}</div></div>
+        ${snap.irr != null ? `<div class="tile" role="listitem"><div class="k">TIR anual</div><div class="v" style="color:${pnlColor(snap.irr)}">${fmtPct(snap.irr)}</div><div class="k">${snap.avgYears != null ? `${snap.avgYears.toFixed(1)} años de media` : 'tu dinero'}</div></div>` : ''}
+        ${snap.withdrawn > 0 ? `<div class="tile" role="listitem"><div class="k">Retirado</div><div class="v">${fmtEur0.format(snap.withdrawn)}</div><div class="k">ya en tu bolsillo</div></div>` : ''}
+        ${rv?.health != null ? `<div class="tile" role="listitem"><div class="k">Salud de la cartera</div><div class="v">${rv.health}<span class="small muted" style="font-weight:400">/100</span></div><div class="k">media ponderada por valor</div></div>` : ''}
+      </div>
+      <div class="row spread" style="margin-top:12px">
+        <span class="small ${staleWarn ? 'ink2' : 'muted'}">${esc(
+          snap.staleDays == null ? 'Sin valores anotados todavía'
+          : snap.staleDays === 0 ? 'Valores al día de hoy'
+          : `Última actualización hace ${snap.staleDays} ${snap.staleDays === 1 ? 'día' : 'días'}`)}</span>
+        <button class="btn sm" id="revalAll">Actualizar valores</button>
+      </div>
+      ${staleWarn ? `<div class="banner warn" style="margin-bottom:0">Los valores llevan ${snap.staleDays} días sin actualizarse: las rentabilidades y los veredictos pueden no reflejar tu situación real.</div>` : ''}`;
   }
 
-  // --- Alta de posiciones ---
+  const body = frag.querySelector('#body');
+
+  if (!pf) {
+    // ---------- Vista consolidada ----------
+    if (portfolios.length > 1 && global.totalValue > 0) {
+      body.appendChild(h(`<div class="card">
+        <h2>Reparto entre carteras</h2>
+        ${distribution(portfolios.map(p => ({ name: p.name, value: snapshotOf(p.id).totalValue })))}
+      </div>`));
+    }
+    if (global.totalValue > 0) {
+      body.appendChild(h(`<div class="card">
+        <h2>Reparto por tipo de activo</h2>
+        ${distribution(Object.entries(global.byClass).map(([c, weight]) => ({
+          name: CLASS_LABEL[c] || c, value: (weight / 100) * global.totalValue,
+        })))}
+      </div>`));
+    }
+    for (const p of portfolios) {
+      const s = snapshotOf(p.id);
+      const cat = CATEGORIES.find(c => c.id === p.riskLevel);
+      body.appendChild(h(`<div class="card pf-card" data-open="${p.id}" role="button" tabindex="0"
+          aria-label="Abrir ${esc(p.name)}: ${fmtEur0.format(s.totalValue)}">
+        <div class="row spread">
+          <div>
+            <h3 style="margin:0">${esc(p.name)}</h3>
+            <p class="small muted" style="margin:2px 0 0">${cat?.name || '—'} · ${s.positions.length} ${s.positions.length === 1 ? 'posición' : 'posiciones'}</p>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:19px;font-weight:700">${fmtEur0.format(s.totalValue)}</div>
+            <div class="small" style="color:${pnlColor(s.pnl)}">${s.positions.length ? `${signed(s.pnl, fmtEur0)} · ${fmtPct(s.pnlPct)}` : 'vacía'}</div>
+          </div>
+        </div>
+        ${s.positions.length ? distribution(s.positions.map(x => ({ name: x.assetName, value: x.valueOrCost })), { legend: false }) : ''}
+      </div>`));
+    }
+    if (!portfolios.length) {
+      body.appendChild(h(`<div class="card"><p class="ink2">No tienes ninguna cartera. Crea la primera con «+ Nueva».</p></div>`));
+    }
+  } else {
+    // ---------- Detalle de una cartera ----------
+    const reviewOf = id => rv.reviews.find(r => r.assetId === id);
+    const history = valuationHistory(eurHoldings(store.listHoldings(pf.id)));
+
+    if (snap.positions.length) {
+      body.appendChild(h(`<div class="card">
+        <h2>Distribución de esta cartera</h2>
+        ${distribution(snap.positions.map(x => ({ name: x.assetName, value: x.valueOrCost })))}
+        ${Object.keys(snap.byClass).length > 1 ? `
+          <h3 style="margin-top:16px">Por tipo de activo</h3>
+          ${distribution(Object.entries(snap.byClass).map(([c, w]) => ({
+            name: CLASS_LABEL[c] || c, value: (w / 100) * snap.totalValue,
+          })))}` : ''}
+      </div>`));
+    }
+
+    for (const a of rv.alerts) {
+      body.appendChild(h(`<div class="banner ${a.level === 'warn' ? 'warn' : 'info'}">${esc(a.text)}</div>`));
+    }
+
+    if (snap.positions.length && (snap.irr != null || snap.twr)) {
+      body.appendChild(h(returnsCard(snap, pnlColor)));
+    }
+
+    if (history.length >= 2) {
+      body.appendChild(h(`<div class="card">
+        <h2>Evolución</h2>
+        <p class="small muted">Con los valores que has ido anotando (${history.length} actualizaciones).</p>
+        <div id="evolution"></div>
+      </div>`));
+    }
+
+    const posWrap = h(`<div><h2 style="margin:22px 2px 8px;font-size:18px">Posiciones (${snap.positions.length})</h2><div id="positions"></div></div>`);
+    body.appendChild(posWrap);
+    const posEl = body.querySelector('#positions');
+    for (const p of snap.positions) {
+      posEl.appendChild(h(positionCard(p, reviewOf(p.assetId), pnlColor, signed)));
+    }
+    body.appendChild(h(`<details class="card" id="addCard"><summary><strong>+ Añadir una posición</strong></summary><div id="addBody"></div></details>`));
+    body.querySelector('#addBody').innerHTML = addFormHTML();
+  }
+
+  $app.innerHTML = '';
+  $app.appendChild(frag);
+  wireCartera({ pf, snap, portfolios });
+}
+
+
+// ---------- Componentes de la vista Cartera ----------
+
+function returnsCard(snap, pnlColor) {
+  return `<div class="card">
+    <h2>Rentabilidad</h2>
+    <p class="small muted">Lo que has puesto frente a lo que has obtenido, y las dos formas correctas de convertirlo en un porcentaje anual.</p>
+    <table class="data" style="margin-top:10px">
+      <tbody>
+        <tr><td>Aportado</td><td class="num">${fmtEur2.format(snap.contributed)}</td><td class="small ink2">Todo el dinero que has metido.</td></tr>
+        ${snap.withdrawn > 0 ? `<tr><td>Retirado por ventas</td><td class="num">${fmtEur2.format(snap.withdrawn)}</td><td class="small ink2">Ya está en tu bolsillo.</td></tr>` : ''}
+        <tr><td>Valor en cartera</td><td class="num">${fmtEur2.format(snap.totalValue)}</td><td class="small ink2">Lo que vale hoy lo que aún tienes.</td></tr>
+        <tr>
+          <td><strong>Obtenido</strong></td>
+          <td class="num"><strong>${fmtEur2.format(snap.obtained)}</strong></td>
+          <td class="small ink2">Retirado + valor actual. La diferencia con lo aportado es tu ganancia real:
+            <strong style="color:${pnlColor(snap.pnl)}">${snap.pnl >= 0 ? '+' : ''}${fmtEur2.format(snap.pnl)}</strong>.</td>
+        </tr>
+        <tr>
+          <td><strong>Simple</strong><br><span class="small muted">obtenido ÷ aportado − 1</span></td>
+          <td class="num" style="color:${pnlColor(snap.pnlPct)}">${fmtPct(snap.pnlPct)}</td>
+          <td class="small ink2">De todo el periodo. Ojo: cada aportación nueva empuja este número
+            <strong>hacia el 0%</strong> — diluye las ganancias, pero también disimula las pérdidas.
+            El euro absoluto de arriba no tiene ese sesgo.</td>
+        </tr>
+        ${snap.irr != null ? `<tr>
+          <td><strong>TIR anual</strong><br><span class="small muted">ponderada por dinero</span></td>
+          <td class="num" style="color:${pnlColor(snap.irr)}">${fmtPct(snap.irr)}</td>
+          <td class="small ink2">Lo que ha rentado <strong>tu dinero</strong> al año, contando que cada aportación lleva dentro un tiempo distinto.</td>
+        </tr>` : ''}
+        ${snap.twr?.annualized != null ? `<tr>
+          <td><strong>TWR anual</strong><br><span class="small muted">ponderada por tiempo</span></td>
+          <td class="num" style="color:${pnlColor(snap.twr.annualized)}">${fmtPct(snap.twr.annualized)}</td>
+          <td class="small ink2">Lo que han rentado <strong>los activos</strong>, sin el efecto de cuándo aportaste. Es la comparable con un índice.</td>
+        </tr>` : ''}
+      </tbody>
+    </table>
+    ${snap.twr?.annualized == null ? '<p class="small muted" style="margin-top:8px">La TWR necesita saber cuánto valía la cartera en varias fechas: seguirá saliendo en cuanto vayas anotando valores con el tiempo.</p>' : ''}
+    <details style="margin-top:10px">
+      <summary class="small">Ver mis aportaciones (${snap.contributions.length})</summary>
+      <table class="data" style="margin-top:8px">
+        <thead><tr><th>Fecha</th><th style="text-align:right">Importe</th><th style="text-align:right">Tiempo dentro</th></tr></thead>
+        <tbody>
+          ${contributionBreakdown(snap.contributions).map(c => `<tr>
+            <td>${new Date(c.ts).toLocaleDateString('es-ES')}</td>
+            <td class="num" style="color:${c.amount >= 0 ? 'var(--ink)' : 'var(--critical)'}">${c.amount >= 0 ? '+' : ''}${fmtEur2.format(c.amount)}</td>
+            <td class="num">${c.years >= 1 ? `${c.years.toFixed(1)} años` : `${c.days} días`}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </details>
+  </div>`;
+}
+
+function positionCard(p, review, pnlColor, signed) {
+  const r = review || { verdict: 'sin_datos', reasons: [], info: [] };
+  const v = VERDICTS[r.verdict];
+  const meter = r.health == null ? '' : `
+    <div class="row" style="gap:8px;margin:2px 0 8px">
+      <div class="health-meter" role="img" aria-label="Salud técnica ${r.health} sobre 100">
+        <div class="hm-fill hm-${r.verdict}" style="width:${r.health}%"></div>
+      </div>
+      <span class="small muted">salud ${r.health}/100</span>
+    </div>`;
+  return `
+    <article class="rec holding v-${r.verdict}" aria-label="${esc(p.assetName)}: ${esc(v.label)}">
+      <div class="head">
+        <div>
+          <span class="name">${esc(p.assetName)}</span>
+          <span class="chip">${esc((p.assetClass || '').toUpperCase())}</span>
+          <span class="chip verdict ${r.verdict}">${esc(v.label)}</span>
+        </div>
+        <div class="pct" style="color:${pnlColor(p.pnlPct)}">${p.pnlPct == null ? '—' : (p.pnlPct >= 0 ? '+' : '') + fmtPct(p.pnlPct)}</div>
+      </div>
+      ${meter}
+      <p class="small" style="margin:0 0 4px">
+        <strong>${fmtEur2.format(p.valueOrCost)}</strong>
+        <span class="muted">· aportado ${fmtEur2.format(p.cost)}
+        ${p.pnl != null ? `· <span style="color:${pnlColor(p.pnl)}">${signed(p.pnl, fmtEur2)}</span>` : ''}
+        ${p.irr != null ? `· ${fmtPct(p.irr)} anual (TIR)` : ''}</span>
+      </p>
+      <p class="small muted" style="margin:0 0 8px">
+        ${p.units > 0 ? `${fmtUnits.format(p.units)} uds. · ` : ''}
+        ${round1(p.weightPct)}% de esta cartera · ${esc(valuationLabel(p))}
+      </p>
+      <ul>${[...r.reasons, ...(r.info || [])].map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="actions">
+        <button class="btn sm" data-reval="${p.id}">Actualizar valor</button>
+        ${r.verdict === 'vender' || r.verdict === 'reducir'
+          ? `<button class="btn ghost sm" data-sell="${p.id}">Registrar venta</button>` : ''}
+        <details class="more"><summary class="btn ghost sm" aria-label="Más acciones">⋯</summary>
+          <div class="more-menu">
+            <button class="btn ghost sm" data-edit="${p.id}">Editar importe</button>
+            <button class="btn ghost sm" data-move="${p.id}">Mover de cartera</button>
+            <button class="btn ghost sm" data-drop="${p.id}">Quitar</button>
+          </div>
+        </details>
+      </div>
+    </article>`;
+}
+
+function addFormHTML() {
   const priceable = ASSETS.map(a => ({ a, info: priceInfo(a) })).filter(x => x.info);
   const byClass = {};
   for (const x of priceable) (byClass[x.a.assetClass] ||= []).push(x);
-  frag.querySelector('#addCard').innerHTML = `
-    <h3>Añadir lo que ya tienes</h3>
+  const today = new Date().toISOString().slice(0, 10);
+  return `
     <p class="small muted">Lo único imprescindible es <strong>cuánto dinero</strong> tienes puesto. Si ya tienes ese activo, se suma a lo que había.</p>
     <label class="small ink2" for="hAsset">Activo</label>
     <select id="hAsset" class="field">
-      ${Object.entries(byClass).map(([cls, items]) => `<optgroup label="${esc(cls.toUpperCase())}">
+      ${Object.entries(byClass).map(([cls, items]) => `<optgroup label="${esc((CLASS_LABEL[cls] || cls).toUpperCase())}">
         ${items.map(({ a, info }) => `<option value="${a.id}">${esc(a.name)} — ${info.price.toFixed(2)} ${esc(info.currency)}</option>`).join('')}
       </optgroup>`).join('')}
     </select>
@@ -1010,7 +1149,7 @@ function viewCartera() {
       </div>
     </div>
     <label class="small ink2" for="hDate">¿Cuándo aportaste este dinero?</label>
-    <input id="hDate" class="field" type="date" max="${new Date().toISOString().slice(0, 10)}" value="${new Date().toISOString().slice(0, 10)}">
+    <input id="hDate" class="field" type="date" max="${today}" value="${today}">
     <p class="small muted">Si lo compraste hace años, pon la fecha real: es lo que permite calcular tu rentabilidad anual de verdad.</p>
     <details style="margin-top:6px">
       <summary class="small muted">Añadir también las unidades (opcional)</summary>
@@ -1020,103 +1159,26 @@ function viewCartera() {
     </details>
     <p class="small muted" id="hHint" style="margin-top:8px"></p>
     <button class="btn" id="hAdd" style="margin-top:6px">Añadir a mi cartera</button>`;
+}
 
-  // --- Gestión de portafolios ---
-  const list = frag.querySelector('#list');
-  for (const p of portfolios) {
-    const cat = CATEGORIES.find(c => c.id === p.riskLevel);
-    const n = store.listHoldings(p.id).length;
-    list.appendChild(h(`
-      <div class="card">
-        <div class="row spread">
-          <div>
-            <h3>${esc(p.name)} <span class="chip">slot ${p.slot}</span></h3>
-            <p class="small ink2">Riesgo: ${cat?.name} · ${cat?.equityRange[0]}–${cat?.equityRange[1]}% renta variable · ${n} ${n === 1 ? 'posición' : 'posiciones'} · creado ${new Date(p.createdAt).toLocaleDateString('es-ES')}</p>
-          </div>
-          <button class="btn ghost sm" data-del="${p.id}">Archivar</button>
-        </div>
-      </div>`));
-  }
-  const cc = frag.querySelector('#createCard');
-  if (portfolios.length >= store.MAX_PORTFOLIOS) {
-    cc.innerHTML = '<p class="ink2">Has alcanzado el límite de 2 portafolios. Archiva uno para crear otro.</p>';
-  } else {
-    cc.innerHTML = `
-      <h3>Crear portafolio</h3>
-      <input id="npfname" placeholder="Nombre (ej. Jubilación)" style="width:100%;font:inherit;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--plane);color:var(--ink);margin:8px 0">
-      <div class="options" id="npfrisk">
-        ${CATEGORIES.map(c => `<button class="opt" data-id="${c.id}">${c.name}<span class="sub">${c.equityRange[0]}–${c.equityRange[1]}% renta variable</span></button>`).join('')}
-      </div>
-      <button class="btn" id="npfcreate" disabled>Crear</button>`;
-  }
-  $app.innerHTML = '';
-  $app.appendChild(frag);
-
-  let riskSel = null;
-  $app.querySelectorAll('#npfrisk .opt').forEach(b => b.onclick = () => {
-    riskSel = b.dataset.id;
-    $app.querySelectorAll('#npfrisk .opt').forEach(x => x.classList.toggle('selected', x === b));
-    document.getElementById('npfcreate').disabled = false;
+// Cablea todos los eventos de la vista Cartera.
+function wireCartera({ pf, snap, portfolios }) {
+  $app.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => {
+    selectedPortfolioId = b.dataset.pf || null;
+    render();
   });
-  const createBtn = document.getElementById('npfcreate');
-  if (createBtn) createBtn.onclick = () => {
-    try {
-      store.createPortfolio({ name: document.getElementById('npfname').value.trim() || 'Portafolio', riskLevel: riskSel });
-      render();
-    } catch (e) { alert(e.message); }
-  };
-  $app.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
-    if (confirm('¿Archivar este portafolio? Podrás crear otro en su lugar. Las posiciones que le hayas registrado dejarán de mostrarse.')) {
-      store.archivePortfolio(b.dataset.del);
-      if (selectedPortfolioId === b.dataset.del) selectedPortfolioId = null;
-      render();
-    }
+  $app.querySelectorAll('[data-open]').forEach(el => {
+    const open = () => { selectedPortfolioId = el.dataset.open; render(); };
+    el.onclick = open;
+    el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
   });
-  $app.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => { selectedPortfolioId = b.dataset.pf; render(); });
-
-  // --- Alta de posición ---
-  const sel = document.getElementById('hAsset');
-  const hint = document.getElementById('hHint');
-  const showHint = () => {
-    const a = getAsset(sel.value);
-    const info = priceInfo(a);
-    hint.textContent = info
-      ? `Último precio conocido de ${a.name}: ${info.price.toFixed(2)} ${info.currency} (${info.date}). Los importes van en euros.`
-      : '';
-  };
-  if (sel) { sel.onchange = showHint; showHint(); }
-  const addBtn = document.getElementById('hAdd');
-  if (addBtn) addBtn.onclick = () => {
-    const a = getAsset(sel.value);
-    const invested = parseFloat(document.getElementById('hInvested').value);
-    const units = parseFloat(document.getElementById('hUnits').value) || 0;
-    const value = parseFloat(document.getElementById('hValue').value);
-    if (!a || !(invested > 0)) {
-      hint.textContent = 'Indica al menos cuánto dinero tienes invertido en este activo.';
-      return;
-    }
-    const dateStr = document.getElementById('hDate').value;
-    const at = dateStr ? Date.parse(dateStr + 'T12:00:00') : null;
-    try {
-      store.addHolding({
-        portfolioId: pf.id, assetId: a.id, assetClass: a.assetClass,
-        currency: 'EUR', invested, units, at,
-        value: value > 0 ? value : null,
-      });
-      render();
-    } catch (e) { hint.textContent = e.message; }
-  };
-
-  // --- Actualización periódica de valores ---
+  document.getElementById('newPf')?.addEventListener('click', () => showPortfolioModal(null));
+  document.getElementById('editPf')?.addEventListener('click', () => showPortfolioModal(pf));
   document.getElementById('revalAll')?.addEventListener('click', () => showRevalueAllModal(snap));
-  $app.querySelectorAll('[data-reval]').forEach(b => b.onclick = () => {
-    const p = snap.positions.find(x => x.id === b.dataset.reval);
-    showRevalueModal(p);
-  });
 
-  // --- Evolución de la cartera ---
   const evo = document.getElementById('evolution');
-  if (evo) {
+  if (evo && pf) {
+    const history = valuationHistory(eurHoldings(store.listHoldings(pf.id)));
     lineChart(evo, {
       dates: history.map(x => x.date),
       values: history.map(x => x.value),
@@ -1125,22 +1187,120 @@ function viewCartera() {
     });
   }
 
-  // --- Acciones sobre posiciones ---
+  // alta de posición
+  const sel = document.getElementById('hAsset');
+  const hint = document.getElementById('hHint');
+  if (sel) {
+    const showHint = () => {
+      const a = getAsset(sel.value);
+      const info = priceInfo(a);
+      hint.textContent = info
+        ? `Último precio conocido de ${a.name}: ${info.price.toFixed(2)} ${info.currency} (${info.date}). Los importes van en euros.`
+        : '';
+    };
+    sel.onchange = showHint; showHint();
+  }
+  document.getElementById('hAdd')?.addEventListener('click', () => {
+    const a = getAsset(sel.value);
+    const invested = parseFloat(document.getElementById('hInvested').value);
+    const units = parseFloat(document.getElementById('hUnits').value) || 0;
+    const value = parseFloat(document.getElementById('hValue').value);
+    const dateStr = document.getElementById('hDate').value;
+    if (!a || !(invested > 0)) {
+      hint.textContent = 'Indica al menos cuánto dinero tienes invertido en este activo.';
+      return;
+    }
+    try {
+      store.addHolding({
+        portfolioId: pf.id, assetId: a.id, assetClass: a.assetClass,
+        currency: 'EUR', invested, units,
+        at: dateStr ? Date.parse(dateStr + 'T12:00:00') : null,
+        value: value > 0 ? value : null,
+      });
+      render();
+    } catch (e) { hint.textContent = e.message; }
+  });
+
+  // acciones por posición
+  const find = id => snap.positions.find(x => x.id === id);
+  $app.querySelectorAll('[data-reval]').forEach(b => b.onclick = () => showRevalueModal(find(b.dataset.reval)));
   $app.querySelectorAll('[data-sell]').forEach(b => b.onclick = () => {
-    const p = snap.positions.find(x => x.id === b.dataset.sell);
-    showSellModal(p, reviewOf(p.assetId));
+    const p = find(b.dataset.sell);
+    showSellModal(p, runReview(pf, null).reviews.find(r => r.assetId === p.assetId));
   });
-  $app.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
-    const p = snap.positions.find(x => x.id === b.dataset.edit);
-    showEditHoldingModal(p);
-  });
+  $app.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => showEditHoldingModal(find(b.dataset.edit)));
+  $app.querySelectorAll('[data-move]').forEach(b => b.onclick = () => showMoveModal(find(b.dataset.move)));
   $app.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {
-    const p = snap.positions.find(x => x.id === b.dataset.drop);
+    const p = find(b.dataset.drop);
     if (confirm(`¿Quitar ${p.assetName} de tu cartera? Solo borra el registro en esta app; no vende nada.`)) {
       store.removeHolding(p.id);
       render();
     }
   });
+}
+
+// Crear o editar una cartera. Sin límite de número: el usuario organiza como quiera.
+function showPortfolioModal(portfolio) {
+  const editing = !!portfolio;
+  const cur = portfolio?.riskLevel || store.getState().profile?.categoryId || CATEGORIES[1].id;
+  const { mb, close } = openModal(`
+    <h2 id="modalTitle">${editing ? 'Ajustes de ' + esc(portfolio.name) : 'Nueva cartera'}</h2>
+    <label class="small ink2" for="pfName" style="display:block;margin-top:10px">Nombre</label>
+    <input id="pfName" class="field" value="${editing ? esc(portfolio.name) : ''}" placeholder="ej. Jubilación, Ahorro, Especulativa">
+    <label class="small ink2" style="display:block;margin-top:10px">Nivel de riesgo</label>
+    <p class="small muted">Marca la banda de renta variable con la que el motor evalúa esta cartera.</p>
+    <div class="options" id="pfRisk">
+      ${CATEGORIES.map(c => `<button class="opt ${c.id === cur ? 'selected' : ''}" data-id="${c.id}">${c.name}<span class="sub">${c.equityRange[0]}–${c.equityRange[1]}% en renta variable</span></button>`).join('')}
+    </div>
+    <div class="row spread" style="margin-top:14px">
+      <button class="btn ghost sm" id="cancel">Cancelar</button>
+      <div class="row" style="gap:8px">
+        ${editing ? '<button class="btn ghost sm danger" id="archive">Archivar</button>' : ''}
+        <button class="btn sm" id="ok">${editing ? 'Guardar' : 'Crear'}</button>
+      </div>
+    </div>`);
+  let risk = cur;
+  mb.querySelectorAll('#pfRisk .opt').forEach(b => b.onclick = () => {
+    risk = b.dataset.id;
+    mb.querySelectorAll('#pfRisk .opt').forEach(x => x.classList.toggle('selected', x === b));
+  });
+  mb.querySelector('#cancel').onclick = close;
+  mb.querySelector('#archive')?.addEventListener('click', () => {
+    if (!confirm('¿Archivar esta cartera? Sus posiciones dejarán de contar en tu balance.')) return;
+    store.archivePortfolio(portfolio.id);
+    selectedPortfolioId = null;
+    close(); render();
+  });
+  mb.querySelector('#ok').onclick = () => {
+    const name = mb.querySelector('#pfName').value;
+    if (editing) {
+      store.renamePortfolio(portfolio.id, name);
+      store.setPortfolioRisk(portfolio.id, risk);
+    } else {
+      const p = store.createPortfolio({ name, riskLevel: risk });
+      selectedPortfolioId = p.id;
+    }
+    close(); render();
+  };
+}
+
+// Mover una posición a otra cartera: reorganizar sin tener que borrar y recrear.
+function showMoveModal(position) {
+  const others = store.listPortfolios().filter(p => p.id !== position.portfolioId);
+  const { mb, close } = openModal(`
+    <h2 id="modalTitle">Mover ${esc(position.assetName)}</h2>
+    ${others.length ? `
+      <p class="ink2" style="margin:10px 0">Elige la cartera de destino. Se conservan las aportaciones, sus fechas y las valoraciones.</p>
+      <div class="options" id="dest">
+        ${others.map(p => `<button class="opt" data-id="${p.id}">${esc(p.name)}</button>`).join('')}
+      </div>`
+    : '<p class="ink2" style="margin:10px 0">Solo tienes una cartera. Crea otra para poder mover posiciones entre ellas.</p>'}
+    <div class="row spread" style="margin-top:12px"><button class="btn ghost sm" id="cancel">Cancelar</button></div>`);
+  mb.querySelectorAll('#dest .opt').forEach(b => b.onclick = () => {
+    store.moveHolding(position.id, b.dataset.id);
+    close(); render();
+  });
+  mb.querySelector('#cancel').onclick = close;
 }
 
 // Anotar cuánto vale HOY una posición según el bróker del usuario. Es lo que
