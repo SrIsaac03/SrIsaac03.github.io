@@ -13,11 +13,25 @@ import { portfolioSnapshot, positionSnapshot, normalizeHolding, valuationHistory
 import { xirr, moneyWeightedReturn, timeWeightedReturn, contributionBreakdown, averageHoldingYears } from '../js/core/returns.js';
 import { reviewHolding, reviewPortfolio, healthScore } from '../js/core/review.js';
 import { generateStrategyOptions } from '../js/core/strategies.js';
+// El store lee localStorage de forma perezosa, así que basta con dejar el shim
+// puesto antes de llamar a sus funciones. Importarlo estáticamente evita tests
+// `async`, que el arnés no sabía esperar (sus fallos se perdían en silencio).
+globalThis.localStorage = mkLocalStorage();
+import * as storeMod from '../js/core/store.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let passed = 0, failed = 0;
 function test(name, fn) {
-  try { fn(); passed++; console.log(`  ✓ ${name}`); }
+  try {
+    const r = fn();
+    if (r && typeof r.then === 'function') {
+      throw new Error('los tests deben ser síncronos: el arnés no espera promesas');
+    }
+    passed++; console.log(`  ✓ ${name}`);
+  } catch (e) { failed++; console.error(`  ✗ ${name}\n    ${e.message}`); }
+}
+async function testAsync(name, fn) {
+  try { await fn(); passed++; console.log(`  ✓ ${name}`); }
   catch (e) { failed++; console.error(`  ✗ ${name}\n    ${e.message}`); }
 }
 function assert(cond, msg = 'assertion failed') { if (!cond) throw new Error(msg); }
@@ -237,23 +251,31 @@ test('Tamaño por posición respeta el tope del perfil', () => {
   assert(a.perPositionPct <= 15, `${a.perPositionPct}`);
 });
 
-console.log('— Límite de 2 portafolios (regla de negocio en store) —');
+console.log('— Carteras (sin límite de número) —');
 
-test('El módulo store bloquea el tercer portafolio', async () => {
-  global.localStorage = mkLocalStorage();
-  const { createPortfolio, listPortfolios } = await import('../js/core/store.js');
+test('Sin límite de carteras: se pueden crear todas las que hagan falta', () => {
+  const { createPortfolio, listPortfolios, archivePortfolio } = storeMod;
   createPortfolio({ name: 'A', riskLevel: 'moderado' });
   createPortfolio({ name: 'B', riskLevel: 'dinamico' });
-  let threw = false;
-  try { createPortfolio({ name: 'C', riskLevel: 'agresivo' }); } catch (e) { threw = true; }
-  assert(threw, 'debería lanzar al crear el 3º');
+  const c = createPortfolio({ name: 'C', riskLevel: 'agresivo' });
+  const d = createPortfolio({ name: 'D', riskLevel: 'conservador' });
+  assert(listPortfolios().length === 4, `${listPortfolios().length} carteras`);
+  // archivar sigue sacándolas del balance sin borrar su historia
+  archivePortfolio(c.id); archivePortfolio(d.id);
   assert(listPortfolios().length === 2);
 });
 
-test('Cada portafolio ocupa un slot 1|2 único', async () => {
-  const { listPortfolios } = await import('../js/core/store.js');
-  const slots = listPortfolios().map(p => p.slot).sort();
-  assert(JSON.stringify(slots) === '[1,2]', JSON.stringify(slots));
+test('Cada cartera tiene id propio y nombre por defecto si no se da', () => {
+  const { createPortfolio, listPortfolios, archivePortfolio, renamePortfolio } = storeMod;
+  const ids = new Set(listPortfolios().map(p => p.id));
+  assert(ids.size === listPortfolios().length, 'ids duplicados');
+  const sinNombre = createPortfolio({ name: '   ', riskLevel: 'moderado' });
+  assert(/^Cartera \d+$/.test(sinNombre.name), `nombre por defecto: ${sinNombre.name}`);
+  renamePortfolio(sinNombre.id, '  Jubilación  ');
+  assert(listPortfolios().find(p => p.id === sinNombre.id).name === 'Jubilación', 'no recorta espacios');
+  renamePortfolio(sinNombre.id, '   ');
+  assert(listPortfolios().find(p => p.id === sinNombre.id).name === 'Jubilación', 'un nombre vacío no debe borrar el anterior');
+  archivePortfolio(sinNombre.id);
 });
 
 console.log('— Preferencias derivadas de las respuestas del test —');
@@ -719,8 +741,8 @@ test('Las exclusiones del test se aplican a todas las opciones', () => {
 
 console.log('— Cartera en el almacén local —');
 
-test('addHolding suma una segunda aportación al mismo activo', async () => {
-  const st = await import('../js/core/store.js');
+test('addHolding suma una segunda aportación al mismo activo', () => {
+  const st = storeMod;
   const pf = st.listPortfolios()[0];
   st.addHolding({ portfolioId: pf.id, assetId: 'AAPL', assetClass: 'equity', currency: 'EUR', invested: 1000, units: 10 });
   st.addHolding({ portfolioId: pf.id, assetId: 'AAPL', assetClass: 'equity', currency: 'EUR', invested: 2000, units: 10 });
@@ -729,16 +751,16 @@ test('addHolding suma una segunda aportación al mismo activo', async () => {
   approx(hs[0].invested, 3000); approx(hs[0].units, 20);
 });
 
-test('addHolding acepta una posición sin unidades, solo con el importe', async () => {
-  const st = await import('../js/core/store.js');
+test('addHolding acepta una posición sin unidades, solo con el importe', () => {
+  const st = storeMod;
   const pf = st.listPortfolios()[0];
   const h = st.addHolding({ portfolioId: pf.id, assetId: 'MSFT', assetClass: 'equity', currency: 'EUR', invested: 750 });
   approx(h.invested, 750); approx(h.units, 0);
   st.removeHolding(h.id);
 });
 
-test('addHolding exige un importe invertido positivo', async () => {
-  const st = await import('../js/core/store.js');
+test('addHolding exige un importe invertido positivo', () => {
+  const st = storeMod;
   const pf = st.listPortfolios()[0];
   let threw = 0;
   try { st.addHolding({ portfolioId: pf.id, assetId: 'KO', invested: 0 }); } catch { threw++; }
@@ -746,8 +768,8 @@ test('addHolding exige un importe invertido positivo', async () => {
   assert(threw === 2, `${threw} errores de 2`);
 });
 
-test('revalueHolding anota el valor y reanotar el mismo día corrige en vez de acumular', async () => {
-  const st = await import('../js/core/store.js');
+test('revalueHolding anota el valor y reanotar el mismo día corrige en vez de acumular', () => {
+  const st = storeMod;
   const pf = st.listPortfolios()[0];
   const h = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
   st.revalueHolding(h.id, 3600);
@@ -760,8 +782,8 @@ test('revalueHolding anota el valor y reanotar el mismo día corrige en vez de a
   assert(st.listHoldings(pf.id).find(x => x.assetId === 'AAPL').valuations.length === 2);
 });
 
-test('revalueMany actualiza varias posiciones e ignora las vacías', async () => {
-  const st = await import('../js/core/store.js');
+test('revalueMany actualiza varias posiciones e ignora las vacías', () => {
+  const st = storeMod;
   const pf = st.listPortfolios()[0];
   const a = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
   const b = st.addHolding({ portfolioId: pf.id, assetId: 'KO', assetClass: 'equity', currency: 'EUR', invested: 400 });
@@ -771,18 +793,24 @@ test('revalueMany actualiza varias posiciones e ignora las vacías', async () =>
   st.removeHolding(b.id);
 });
 
-test('recordSale descuenta el importe proporcionalmente y cierra al vender todo', async () => {
-  const st = await import('../js/core/store.js');
+test('recordSale descuenta el importe proporcionalmente y cierra al vender todo', () => {
+  const st = storeMod;
   const pf = st.listPortfolios()[0];
   const h = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
   const before = positionSnapshot(h, null);
-  st.recordSale({ id: h.id, amount: before.valueOrCost / 4, verdict: 'reducir' });
-  const after = st.listHoldings(pf.id).find(x => x.assetId === 'AAPL');
-  approx(after.invested, before.cost * 0.75, 1e-6);
+  const cobrado = before.valueOrCost / 4;
+  st.recordSale({ id: h.id, amount: cobrado, verdict: 'reducir' });
+  const after = positionSnapshot(st.listHoldings(pf.id).find(x => x.assetId === 'AAPL'), null);
+  // el aportado queda NETO (lo puesto menos lo cobrado), no prorrateado: es lo
+  // que hace que la ganancia incluya la parte ya realizada
+  approx(after.cost, before.cost - cobrado, 1e-6);
   approx(after.units, before.units * 0.75, 1e-6);
+  approx(after.valueOrCost, before.valueOrCost * 0.75, 1e-6);
+  // comprobación de verdad: aportado − cobrado − valor restante = ganancia total
+  approx(after.valueOrCost - after.cost, (cobrado + before.valueOrCost * 0.75) - before.cost, 1e-6);
   const sales = st.listDecisions().filter(d => d.action === 'sold');
   assert(sales.length === 1, JSON.stringify(sales));
-  approx(sales[0].amount, before.valueOrCost / 4, 1e-6);
+  approx(sales[0].amount, cobrado, 1e-6);
   st.recordSale({ id: h.id, amount: 1e9 });
   assert(!st.listHoldings(pf.id).some(x => x.assetId === 'AAPL'), 'vender todo debe cerrar la posición');
 });
@@ -795,8 +823,54 @@ test('Las ventas registradas NO penalizan al activo en el motor de feedback', ()
   assert(rejected.assetAdj.get('AAPL') < 0, 'un rechazo explícito sí penaliza');
 });
 
-test('La opción elegida se recuerda por portafolio', async () => {
-  const st = await import('../js/core/store.js');
+test('moveHolding traslada la posición conservando aportaciones y valoraciones', () => {
+  const st = storeMod;
+  const [a, b] = st.listPortfolios();
+  const h = st.addHolding({ portfolioId: a.id, assetId: 'PG', assetClass: 'equity', currency: 'EUR', invested: 600, units: 5 });
+  st.revalueHolding(h.id, 700);
+  st.moveHolding(h.id, b.id);
+  assert(!st.listHoldings(a.id).some(x => x.assetId === 'PG'), 'sigue en el origen');
+  const moved = st.listHoldings(b.id).find(x => x.assetId === 'PG');
+  assert(moved, 'no llegó al destino');
+  approx(moved.invested, 600); approx(moved.units, 5);
+  assert(moved.valuations.length === 1 && moved.valuations[0].value === 700, 'perdió la valoración');
+  st.removeHolding(moved.id);
+});
+
+test('moveHolding fusiona si el destino ya tiene ese activo', () => {
+  const st = storeMod;
+  const [a, b] = st.listPortfolios();
+  const origen = st.addHolding({ portfolioId: a.id, assetId: 'JNJ', assetClass: 'equity', currency: 'EUR', invested: 300, units: 3 });
+  st.addHolding({ portfolioId: b.id, assetId: 'JNJ', assetClass: 'equity', currency: 'EUR', invested: 700, units: 7 });
+  st.moveHolding(origen.id, b.id);
+  const dest = st.listHoldings(b.id).filter(x => x.assetId === 'JNJ');
+  assert(dest.length === 1, `${dest.length} líneas: debería fusionarse en una`);
+  approx(dest[0].invested, 1000); approx(dest[0].units, 10);
+  assert(dest[0].contributions.length === 2, 'debe conservar ambas aportaciones con su fecha');
+  st.removeHolding(dest[0].id);
+});
+
+test('El balance consolidado suma las carteras activas y excluye las archivadas', () => {
+  const st = storeMod;
+  const [a, b] = st.listPortfolios();
+  st.addHolding({ portfolioId: a.id, assetId: 'WMT', assetClass: 'equity', currency: 'EUR', invested: 1000 });
+  st.addHolding({ portfolioId: b.id, assetId: 'PEP', assetClass: 'equity', currency: 'EUR', invested: 500 });
+  const activos = new Set(st.listPortfolios().map(p => p.id));
+  const total = portfolioSnapshot(st.listHoldings().filter(h => activos.has(h.portfolioId)), () => null);
+  approx(total.contributed, st.listHoldings().filter(h => activos.has(h.portfolioId))
+    .reduce((s, h) => s + h.invested, 0));
+
+  // al archivar una cartera, sus posiciones dejan de contar en el balance
+  const antes = total.totalValue;
+  st.archivePortfolio(b.id);
+  const activos2 = new Set(st.listPortfolios().map(p => p.id));
+  const despues = portfolioSnapshot(st.listHoldings().filter(h => activos2.has(h.portfolioId)), () => null);
+  assert(despues.totalValue < antes, `${despues.totalValue} debería ser menor que ${antes}`);
+  assert(!activos2.has(b.id), 'la archivada sigue activa');
+});
+
+test('La opción elegida se recuerda por portafolio', () => {
+  const st = storeMod;
   const pf = st.listPortfolios()[0];
   st.saveStrategyChoice(pf.id, 'nucleo', { name: 'Núcleo indexado', equityPct: 40 });
   assert(st.getStrategyChoice(pf.id).strategyId === 'nucleo');
@@ -1000,7 +1074,7 @@ test('spliceSeries rechaza desviaciones de empalme sospechosas (>25%)', () => {
   assert(threw, 'debería rechazar factor 1.67');
 });
 
-test('updateBundle extiende el calendario con el índice y tolera fallos por serie', async () => {
+await testAsync('updateBundle extiende el calendario con el índice y tolera fallos por serie', async () => {
   const bundle = JSON.parse(readFileSync(join(root, 'data/history.json'), 'utf8'));
   const lastDate = bundle.dates[bundle.dates.length - 1];
   const spLast = bundle.series.SP500[bundle.series.SP500.length - 1];

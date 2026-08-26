@@ -82,7 +82,7 @@ Librerías clave (Flutter): `riverpod`/`bloc` (estado), `fl_chart` (gráficos),
 - **Motor de tareas / tiempo real:** **Celery + Redis** (o `arq`) para jobs de
   refresco de mercado; **WebSocket** para empujar señales al cliente al abrir la app.
 - **Base de datos:** **PostgreSQL** (relacional — encaja perfecto con el modelo de
-  datos, y su restricción de "máx. 2 portafolios" se resuelve con constraints).
+  datos; las carteras del usuario son una relación 1-N sin límite de número).
   **TimescaleDB** (extensión de Postgres) para series temporales de precios.
 - **Cache / cola:** **Redis**.
 - **Auth:** **Auth0 / Clerk / Supabase Auth** (delega el KYC-light y MFA).
@@ -125,7 +125,7 @@ Principio rector: **baja fricción + explicabilidad**. El usuario debe entender 
 4. **Conexión del ecosistema:** el usuario selecciona su **banco/bróker** de una lista.
    Opcional: conectar por Open Banking (solo lectura de saldo) para pre-rellenar capital.
    Aquí se carga su **catálogo de productos disponibles**.
-5. **Creación del primer portafolio** (máx. 2): nombre + nivel de riesgo
+5. **Creación de la primera cartera** (sin límite de número): nombre + nivel de riesgo
    (heredado del test o ajustado dentro de los límites del perfil).
 
 ### 2.2 Pantalla principal (Home / "Hoy")
@@ -159,7 +159,7 @@ Principio rector: **baja fricción + explicabilidad**. El usuario debe entender 
 
 ### 2.4 Otras pantallas
 
-- **Mis portafolios (máx. 2):** rendimiento, distribución, drift vs. objetivo.
+- **Mis carteras:** balance consolidado de todas, reparto entre ellas y, dentro de cada una, su distribución por activo y por tipo de activo, rendimiento y drift vs. objetivo.
 - **Historial:** recomendaciones aceptadas/rechazadas, con motivos (transparencia).
 - **Ajustes:** re-hacer test de riesgo, gestionar bróker conectado, privacidad.
 
@@ -170,7 +170,7 @@ Principio rector: **baja fricción + explicabilidad**. El usuario debe entender 
 
 ## 3. Modelo de Datos (PostgreSQL)
 
-Esquema relacional. Presto atención especial al **límite de 2 portafolios** y al
+Esquema relacional. Presto atención especial a la **cartera real del usuario** y al
 **historial de recomendaciones rechazadas**.
 
 ### 3.1 Entidades principales
@@ -228,16 +228,14 @@ Asset(
   isin TEXT
 )
 
--- Portafolios (¡MÁXIMO 2 POR USUARIO!)
+-- Carteras (sin límite de número: el usuario organiza como quiera)
 Portfolio(
   id UUID PK,
   user_id UUID FK -> User,
   name TEXT,
-  risk_level TEXT,              -- cada portafolio tiene su propio nivel
-  slot SMALLINT CHECK (slot IN (1,2)),   -- ranura 1 o 2
+  risk_level TEXT,              -- cada cartera tiene su propio nivel
   created_at TIMESTAMPTZ,
-  archived BOOLEAN DEFAULT false,
-  UNIQUE (user_id, slot) WHERE archived = false   -- índice parcial
+  archived BOOLEAN DEFAULT false
 )
 
 -- Recomendaciones generadas por el motor
@@ -309,23 +307,21 @@ RejectedRecommendation(
 )
 ```
 
-### 3.2 Cómo se modela el **límite de 2 portafolios**
+### 3.2 Carteras múltiples y balance consolidado
 
-Tres capas de defensa (defensa en profundidad):
+No hay límite de carteras: la separación por objetivo (jubilación, ahorro, especulación) es
+justamente lo que hace útil tener varias, y ponerle un tope arbitrario solo estorbaba.
 
-1. **A nivel de BD (la fuente de verdad):** columna `slot SMALLINT CHECK (slot IN (1,2))`
-   + **índice único parcial** `UNIQUE (user_id, slot) WHERE archived = false`.
-   Garantiza que un usuario no pueda tener dos portafolios activos en la misma ranura,
-   y por tanto **máximo 2 activos** a la vez. Es imposible violarlo aunque el backend
-   tenga un bug o haya condición de carrera.
-2. **A nivel de aplicación:** el servicio `PortfolioService.create()` cuenta los
-   activos antes de insertar y devuelve un error de negocio claro.
-3. **A nivel de UI:** el botón "Crear portafolio" se deshabilita al llegar a 2.
-
-> Alternativa NoSQL (si se usara MongoDB): un documento `User` con un array
-> `portfolios` y validación de esquema `{ portfolios: { $maxItems: 2 } }`.
-> Pero **recomiendo Postgres**: las constraints declarativas hacen este requisito
-> trivial y a prueba de balas, algo que en NoSQL queda solo a nivel de aplicación.
+- **Archivar** en vez de borrar (`archived`): una cartera archivada deja de contar en el balance
+  pero conserva su historia.
+- **Balance consolidado:** se agregan las posiciones de todas las carteras *activas* con el mismo
+  `portfolioSnapshot`, así que la TIR global considera las aportaciones de todas ellas con sus
+  fechas. No es la media de las TIR de cada cartera — eso sería incorrecto.
+- **Distribución** en dos niveles: reparto entre carteras y, dentro de cada una, reparto por activo
+  y por tipo de activo. Misma barra apilada + leyenda en los tres casos, para que «distribución»
+  se lea igual en toda la app.
+- **Mover posiciones** entre carteras (`moveHolding`) conserva aportaciones, fechas y valoraciones;
+  si el destino ya tiene ese activo, se fusionan en una sola línea sumando ambos historiales.
 
 ### 3.3 Cómo se modela el **historial de rechazos**
 
@@ -559,6 +555,6 @@ activaron y un `market_snapshot`. Esto es obligatorio por: (a) confianza del usu
 - **Cliente:** React PWA + Tauri (MVP) → **Flutter** (nativo multiplataforma).
 - **Backend:** **Python + FastAPI + PostgreSQL + Redis**.
 - **Motor:** pipeline de **5 etapas** con reglas explicables; ML solo cuando haya datos.
-- **Límite de 2 portafolios:** garantizado por **constraint de BD** (índice único parcial).
+- **Carteras:** sin límite de número, con balance consolidado y distribución en dos niveles.
 - **Rechazos:** tabla dedicada con `reason_code` + `market_snapshot` para reentrenar.
 - **No-custodial y regulación:** la app **nunca** opera; validar el encaje legal antes de lanzar.

@@ -31,7 +31,9 @@ financiero personalizado.
 - **Semáforo de timing** (invertir / escalonar / esperar en liquidez) validado por backtest.
 - **Filtro por bróker**: solo se recomienda lo que tu plataforma permite contratar, con sus
   comisiones y mínimos reales (catálogo curado: MyInvestor, Trade Republic, DEGIRO, IBKR, Revolut, BBVA).
-- **Máximo 2 portafolios** simultáneos, cada uno con su nivel de riesgo.
+- **Carteras ilimitadas** con **balance consolidado**: una vista «Todas» con tu patrimonio total,
+  el reparto entre carteras y, dentro de cada una, la distribución por activo y por tipo de activo.
+  Las posiciones se mueven entre carteras sin perder aportaciones ni valoraciones.
 - **Feedback loop**: cada aceptación/rechazo (con motivo) reajusta el motor, con decaimiento temporal.
 - **Máquina del tiempo** (`?fecha=2008-09-15`): mira qué habría recomendado el motor en cualquier
   fecha desde 1991 y qué pasó en los 3 meses siguientes.
@@ -57,7 +59,7 @@ financiero personalizado.
 
 ```bash
 node tools/build-data.mjs     # regenerar data/history.json desde los CSV
-node tests/run.mjs            # suite de tests unitarios (95 tests)
+node tests/run.mjs            # suite de tests unitarios (98 tests)
 node backtest/tune.mjs        # búsqueda en rejilla de parámetros (train 1991-2010)
 node backtest/backtest.mjs    # informe completo → backtest/REPORT.md
 python3 -m http.server 8321   # servir la app en local

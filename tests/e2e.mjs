@@ -1,5 +1,5 @@
 // Test E2E del Copiloto de Inversión: onboarding completo, decisiones,
-// límite de portafolios, máquina del tiempo (verde y rojo) y degradación sin red.
+// carteras múltiples, máquina del tiempo (verde y rojo) y degradación sin red.
 import { chromium } from 'playwright-core';
 
 const BASE = 'http://127.0.0.1:8321/';
@@ -116,6 +116,9 @@ await check('Historial registra ambas decisiones con motivo', async () => {
 
 await check('Cartera: registrar una posición y recibir veredicto de tendencia', async () => {
   await page.locator('nav.tabs button:has-text("Cartera")').click();
+  // «Todas» es la vista por defecto: hay que entrar en una cartera para añadir
+  await page.locator('.pf-chip').nth(1).click();
+  await page.locator('#addCard > summary').click();
   await page.waitForSelector('#hAsset');
   await page.selectOption('#hAsset', 'KO');
   await page.fill('#hInvested', '800');
@@ -125,7 +128,7 @@ await check('Cartera: registrar una posición y recibir veredicto de tendencia',
   if (!/Coca-Cola/.test(txt)) throw new Error('la posición no aparece');
   if (!/Vender|Reducir|Mantener|Reforzar|Sin datos/.test(txt)) throw new Error('sin veredicto: ' + txt);
   // valoración y peso sobre el capital
-  if (!/% de tu capital/.test(txt)) throw new Error('sin peso sobre el capital');
+  if (!/% de esta cartera/.test(txt)) throw new Error('sin peso dentro de la cartera');
   if (!/salud \d+\/100/.test(txt)) throw new Error('sin índice de salud');
   if (!(await page.locator('.holding .health-meter .hm-fill').count())) throw new Error('sin medidor visual');
   if (!(await page.locator('text=Salud de la cartera').count())) throw new Error('sin salud global de la cartera');
@@ -163,6 +166,7 @@ await check('Actualización periódica en bloque de toda la cartera', async () =
 await check('La cartera y sus valoraciones persisten al recargar (almacenamiento local)', async () => {
   await page.reload({ waitUntil: 'networkidle' });
   await page.locator('nav.tabs button:has-text("Cartera")').click();
+  await page.locator('.pf-chip').nth(1).click();
   await page.waitForSelector('.holding', { timeout: 10000 });
   const txt = await page.locator('.holding').first().innerText();
   if (!/Coca-Cola/.test(txt)) throw new Error('se perdió la posición');
@@ -171,12 +175,13 @@ await check('La cartera y sus valoraciones persisten al recargar (almacenamiento
 
 await check('Aportaciones con fecha propia → TIR anual, no solo rentabilidad simple', async () => {
   // segunda aportación al mismo activo, fechada dos años atrás
+  await page.locator('#addCard > summary').click();
   await page.selectOption('#hAsset', 'KO');
   await page.fill('#hInvested', '500');
   const old = new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10);
   await page.fill('#hDate', old);
   await page.click('#hAdd');
-  await page.waitForSelector('text=Rentabilidad anual (TIR)', { timeout: 5000 });
+  await page.waitForSelector('.tile:has-text("TIR anual")', { timeout: 5000 });
   // el desglose debe listar las dos aportaciones con sus fechas
   await page.locator('summary:has-text("Ver mis aportaciones")').click();
   const rows = await page.locator('.card table.data tbody tr').count();
@@ -192,15 +197,37 @@ await check('Aportaciones con fecha propia → TIR anual, no solo rentabilidad s
 });
 
 
-await check('Portafolios: crear el 2º funciona, el 3º está bloqueado', async () => {
-  await page.locator('nav.tabs button:has-text("Cartera")').click();
-  await page.waitForSelector('#npfname');
-  await page.fill('#npfname', 'Especulativa');
-  await page.locator('#npfrisk .opt[data-id="agresivo"]').click();
-  await page.click('#npfcreate');
-  await page.waitForSelector('text=2/2');
-  const blocked = await page.locator('text=límite de 2 portafolios').count();
-  if (!blocked) throw new Error('no muestra bloqueo del 3º');
+await check('Se pueden crear tantas carteras como se quiera (sin límite)', async () => {
+  for (const [name, risk] of [['Especulativa', 'agresivo'], ['Ahorro', 'conservador']]) {
+    await page.locator('#newPf').click();
+    await page.waitForSelector('#pfName');
+    await page.fill('#pfName', name);
+    await page.locator(`#pfRisk .opt[data-id="${risk}"]`).click();
+    await page.locator('.modal #ok').click();
+    await page.waitForSelector('.modal', { state: 'detached' });
+  }
+  const chips = await page.locator('.pf-chip[data-pf]').count();
+  if (chips < 4) throw new Error(`${chips} chips: deberían ser «Todas» + 3 carteras`);
+  if (await page.locator('text=límite').count()) throw new Error('sigue mostrando un límite');
+});
+
+await check('Balance consolidado de todas las carteras y reparto entre ellas', async () => {
+  await page.locator('.pf-chip[data-pf=""]').click();
+  await page.waitForSelector('text=Todas tus carteras', { timeout: 5000 });
+  await page.waitForSelector('text=Reparto entre carteras');
+  await page.waitForSelector('text=Reparto por tipo de activo');
+  // una tarjeta por cartera, cada una con su valor
+  const cards = await page.locator('.pf-card').count();
+  if (cards !== 3) throw new Error(`${cards} tarjetas de cartera, esperaba 3`);
+  const total = await page.locator('.tile .v').first().innerText();
+  if (!/\d/.test(total)) throw new Error('sin valor total consolidado: ' + total);
+});
+
+await check('Desde el consolidado se entra a una cartera y se ve su distribución', async () => {
+  await page.locator('.pf-card').first().click();
+  await page.waitForSelector('text=Distribución de esta cartera', { timeout: 5000 });
+  if (!(await page.locator('.stack').count())) throw new Error('sin barra de distribución');
+  if (!(await page.locator('.poslist .pp').count())) throw new Error('sin leyenda con porcentajes');
 });
 
 await check('Dos carteras con riesgos distintos → asignaciones distintas', async () => {
