@@ -2,7 +2,7 @@
 
 Este documento responde a una sola pregunta: **¿la señal del semáforo aporta
 información real, o es fruto del azar y del sobreajuste?** Para responder con
-honestidad aplicamos cinco pruebas exigentes sobre el S&P 500 (1991-01-02 → 2026-08-27).
+honestidad aplicamos cinco pruebas exigentes sobre el S&P 500 (1991-01-02 → 2026-08-28).
 
 > Metodología: la señal del cierre del día *t* se aplica en *t+1* (sin sesgo de
 > anticipación). Todas las cifras son reproducibles: `node backtest/reliability.mjs`.
@@ -30,7 +30,7 @@ López de Prado corrige ese sesgo y también la asimetría/curtosis de los retor
 
 | Métrica | Valor |
 |---|---|
-| Sharpe observado (mejor config, anualizado) | 0.80 |
+| Sharpe observado (mejor config, anualizado) | 0.79 |
 | Umbral de Sharpe esperado solo por azar (486 pruebas) | 0.15 |
 | Asimetría / exceso de curtosis | -0.38 / 5.43 |
 | **DSR = P(Sharpe verdadero > umbral)** | **100.0%** |
@@ -47,9 +47,9 @@ visto. Se encadenan 28 ventanas sin solape de información.
 | | CAGR | Volatilidad | Sharpe | Caída máx. |
 |---|---|---|---|---|
 | **Semáforo walk-forward (OOS)** | 6.9% | 11.4% | 0.64 | -19% |
-| Comprar y mantener (mismo tramo) | 7.0% | 19.2% | 0.45 | -57% |
+| Comprar y mantener (mismo tramo) | 6.9% | 19.2% | 0.45 | -57% |
 
-Tramo evaluado: 1998-12-22 → 2026-08-27.
+Tramo evaluado: 1998-12-22 → 2026-08-28.
 **Lectura:** si el Sharpe walk-forward sigue siendo bueno, la estrategia no depende
 de haber elegido parámetros "a toro pasado". ✅ Bate a comprar-y-mantener en Sharpe fuera de muestra.
 
