@@ -31,14 +31,14 @@ La base es el % incondicional (el mercado sube la mayoría de los períodos: sup
 | Entrenamiento 1991–2010 | 🟡 ámbar | 899 | 77.6% | 4.6% | 76.7% |
 | Entrenamiento 1991–2010 | 🔴 rojo | 1118 | 46.8% | -1.8% | 41.4% |
 | Entrenamiento 1991–2010 | *base (todos)* | 4979 | 66.2% | 1.9% | 70.9% |
-| Validación 2011–2026 (fuera de muestra) | 🟢 verde | 2720 | 75.6% | 2.7% | 77.7% |
+| Validación 2011–2026 (fuera de muestra) | 🟢 verde | 2721 | 75.6% | 2.7% | 77.7% |
 | Validación 2011–2026 (fuera de muestra) | 🟡 ámbar | 631 | 73.7% | 2.7% | 85.1% |
 | Validación 2011–2026 (fuera de muestra) | 🔴 rojo | 527 | 75.5% | 5.6% | 83.5% |
-| Validación 2011–2026 (fuera de muestra) | *base (todos)* | 3878 | 75.2% | 3.1% | 79.7% |
-| Período completo 1991–2026 | 🟢 verde | 5717 | 72.9% | 2.6% | 79.0% |
+| Validación 2011–2026 (fuera de muestra) | *base (todos)* | 3879 | 75.3% | 3.1% | 79.7% |
+| Período completo 1991–2026 | 🟢 verde | 5718 | 72.9% | 2.6% | 79.0% |
 | Período completo 1991–2026 | 🟡 ámbar | 1558 | 76.4% | 3.9% | 80.7% |
 | Período completo 1991–2026 | 🔴 rojo | 1645 | 56.0% | 0.5% | 56.4% |
-| Período completo 1991–2026 | *base (todos)* | 8920 | 70.4% | 2.5% | 75.1% |
+| Período completo 1991–2026 | *base (todos)* | 8921 | 70.4% | 2.5% | 75.1% |
 
 **Lectura:** el valor del semáforo no está en "predecir" el mercado sino en (a) que los días verdes
 suben con más frecuencia y más cuantía que la base, y (b) que estar fuera en los rojos recorta las
@@ -51,8 +51,8 @@ Aportación mensual constante. "Con timing": verde invierte todo lo acumulado, �
 | Período | Valor final DCA fija | Valor final DCA con timing | Ratio |
 |---|---|---|---|
 | Entrenamiento 1991–2010 | 382.8× | 389.9× | 1.019 |
-| Validación 2011–2026 (fuera de muestra) | 576.0× | 569.4× | 0.989 |
-| Período completo 1991–2026 | 2921.4× | 2959.0× | 1.013 |
+| Validación 2011–2026 (fuera de muestra) | 573.8× | 567.3× | 0.989 |
+| Período completo 1991–2026 | 2910.5× | 2947.9× | 1.013 |
 
 ## 4. Selección de activos (momentum/volatilidad, top-5 mensual vs. equiponderado)
 

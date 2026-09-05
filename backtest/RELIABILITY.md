@@ -2,7 +2,7 @@
 
 Este documento responde a una sola pregunta: **¿la señal del semáforo aporta
 información real, o es fruto del azar y del sobreajuste?** Para responder con
-honestidad aplicamos cinco pruebas exigentes sobre el S&P 500 (1991-01-02 → 2026-09-03).
+honestidad aplicamos cinco pruebas exigentes sobre el S&P 500 (1991-01-02 → 2026-09-04).
 
 > Metodología: la señal del cierre del día *t* se aplica en *t+1* (sin sesgo de
 > anticipación). Todas las cifras son reproducibles: `node backtest/reliability.mjs`.
@@ -17,7 +17,7 @@ autocorrelación de ambas series).
 | Horizonte | Verde − Rojo (observado) | Media bajo azar | p-valor |
 |---|---|---|---|
 | 3 meses (63 sesiones) | 2.1% | -0.0% | **0.1483** |
-| 1 mes (21 sesiones) | 0.6% | -0.0% | **0.1896** |
+| 1 mes (21 sesiones) | 0.6% | -0.0% | **0.1893** |
 
 **Lectura:** un p-valor < 0,05 indica que la diferencia verde-rojo es muy
 improbable por azar. ⚠️ La señal a 3 meses no alcanza significancia estándar.
@@ -30,7 +30,7 @@ López de Prado corrige ese sesgo y también la asimetría/curtosis de los retor
 
 | Métrica | Valor |
 |---|---|
-| Sharpe observado (mejor config, anualizado) | 0.80 |
+| Sharpe observado (mejor config, anualizado) | 0.79 |
 | Umbral de Sharpe esperado solo por azar (486 pruebas) | 0.15 |
 | Asimetría / exceso de curtosis | -0.38 / 5.43 |
 | **DSR = P(Sharpe verdadero > umbral)** | **100.0%** |
@@ -46,10 +46,10 @@ visto. Se encadenan 28 ventanas sin solape de información.
 
 | | CAGR | Volatilidad | Sharpe | Caída máx. |
 |---|---|---|---|---|
-| **Semáforo walk-forward (OOS)** | 6.9% | 11.4% | 0.64 | -19% |
-| Comprar y mantener (mismo tramo) | 7.0% | 19.2% | 0.45 | -57% |
+| **Semáforo walk-forward (OOS)** | 6.8% | 11.4% | 0.64 | -19% |
+| Comprar y mantener (mismo tramo) | 6.9% | 19.2% | 0.45 | -57% |
 
-Tramo evaluado: 1998-12-22 → 2026-09-03.
+Tramo evaluado: 1998-12-22 → 2026-09-04.
 **Lectura:** si el Sharpe walk-forward sigue siendo bueno, la estrategia no depende
 de haber elegido parámetros "a toro pasado". ✅ Bate a comprar-y-mantener en Sharpe fuera de muestra.
 
