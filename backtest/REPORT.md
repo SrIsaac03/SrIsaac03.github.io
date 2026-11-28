@@ -16,7 +16,7 @@ Exposición: verde = 100% invertido · ámbar = 50% · rojo = 0% (liquidez).
 | **Entrenamiento 1991–2010** | Semáforo | 8.3% | 11.5% | 0.75 | -18% |
 | | Comprar y mantener | 6.9% | 18.7% | 0.45 | -57% |
 | **Validación 2011–2026 (fuera de muestra)** | Semáforo | 7.6% | 11.7% | 0.69 | -19% |
-| | Comprar y mantener | 11.6% | 17.2% | 0.73 | -34% |
+| | Comprar y mantener | 11.6% | 17.2% | 0.72 | -34% |
 | **Período completo 1991–2026** | Semáforo | 8.0% | 11.6% | 0.72 | -19% |
 | | Comprar y mantener | 9.0% | 18.0% | 0.57 | -57% |
 
@@ -31,14 +31,14 @@ La base es el % incondicional (el mercado sube la mayoría de los períodos: sup
 | Entrenamiento 1991–2010 | 🟡 ámbar | 899 | 77.6% | 4.6% | 76.7% |
 | Entrenamiento 1991–2010 | 🔴 rojo | 1118 | 46.8% | -1.8% | 41.4% |
 | Entrenamiento 1991–2010 | *base (todos)* | 4979 | 66.2% | 1.9% | 70.9% |
-| Validación 2011–2026 (fuera de muestra) | 🟢 verde | 2777 | 75.4% | 2.7% | 77.7% |
-| Validación 2011–2026 (fuera de muestra) | 🟡 ámbar | 631 | 73.7% | 2.7% | 85.4% |
+| Validación 2011–2026 (fuera de muestra) | 🟢 verde | 2778 | 75.4% | 2.7% | 77.7% |
+| Validación 2011–2026 (fuera de muestra) | 🟡 ámbar | 631 | 73.7% | 2.7% | 85.3% |
 | Validación 2011–2026 (fuera de muestra) | 🔴 rojo | 527 | 75.5% | 5.6% | 83.5% |
-| Validación 2011–2026 (fuera de muestra) | *base (todos)* | 3935 | 75.1% | 3.1% | 79.7% |
-| Período completo 1991–2026 | 🟢 verde | 5774 | 72.8% | 2.6% | 78.9% |
+| Validación 2011–2026 (fuera de muestra) | *base (todos)* | 3936 | 75.1% | 3.1% | 79.7% |
+| Período completo 1991–2026 | 🟢 verde | 5775 | 72.8% | 2.6% | 78.9% |
 | Período completo 1991–2026 | 🟡 ámbar | 1558 | 76.4% | 3.9% | 80.9% |
 | Período completo 1991–2026 | 🔴 rojo | 1645 | 56.0% | 0.5% | 56.4% |
-| Período completo 1991–2026 | *base (todos)* | 8977 | 70.4% | 2.4% | 75.1% |
+| Período completo 1991–2026 | *base (todos)* | 8978 | 70.3% | 2.4% | 75.1% |
 
 **Lectura:** el valor del semáforo no está en "predecir" el mercado sino en (a) que los días verdes
 suben con más frecuencia y más cuantía que la base, y (b) que estar fuera en los rojos recorta las
@@ -51,8 +51,8 @@ Aportación mensual constante. "Con timing": verde invierte todo lo acumulado, �
 | Período | Valor final DCA fija | Valor final DCA con timing | Ratio |
 |---|---|---|---|
 | Entrenamiento 1991–2010 | 382.8× | 389.9× | 1.019 |
-| Validación 2011–2026 (fuera de muestra) | 538.2× | 532.1× | 0.989 |
-| Período completo 1991–2026 | 2718.1× | 2753.1× | 1.013 |
+| Validación 2011–2026 (fuera de muestra) | 536.8× | 530.7× | 0.989 |
+| Período completo 1991–2026 | 2711.2× | 2746.1× | 1.013 |
 
 ## 4. Selección de activos (momentum/volatilidad, top-5 mensual vs. equiponderado)
 
